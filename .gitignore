@@ -1,0 +1,6 @@
+*.chkpt
+*.pt
+*.pickle
+*.pkl
+*.pyc
+*.txt
