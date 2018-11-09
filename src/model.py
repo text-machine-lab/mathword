@@ -91,6 +91,8 @@ class Transformer(nn.Module):
             n_layers=n_layers, n_head=n_head, d_k=d_k, d_v=d_v,
             dropout=dropout)
 
+        print("set tgt embedding, size {}".format(self.decoder.tgt_word_emb.weight.size()))
+        print("set positions decoder, size{}".format(self.decoder.position_enc.weight.size()))
         self.tgt_word_prj = nn.Linear(d_model, n_tgt_vocab, bias=False)
         nn.init.xavier_normal_(self.tgt_word_prj.weight)
 
@@ -112,7 +114,6 @@ class Transformer(nn.Module):
             self.encoder.src_word_emb.weight = self.decoder.tgt_word_emb.weight
 
     def forward(self, src_seq, src_pos, tgt_seq, tgt_pos):
-
         tgt_seq, tgt_pos = tgt_seq[:, :-1], tgt_pos[:, :-1]
 
         enc_output, *_ = self.encoder(src_seq, src_pos)

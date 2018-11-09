@@ -43,7 +43,7 @@ class Scheduler(ScheduledOptim):
         self.n_warmup_steps = n_warmup_steps
         self.n_current_steps = 0
         # self.init_lr = np.power(d_model, -0.5)  # this is from original code
-        self.init_lr = 0.0005
+        self.init_lr = 0.001
 
 
 def main():
@@ -53,7 +53,7 @@ def main():
     parser.add_argument('-split', type=float, default=0.8, help="portion for training")
 
     parser.add_argument('-epoch', type=int, default=10)
-    parser.add_argument('-batch_size', type=int, default=32)
+    parser.add_argument('-batch_size', type=int, default=64)
 
     parser.add_argument('-d_word_vec', type=int, default=300,
                         help="dimension of src text word vectors")

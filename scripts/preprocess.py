@@ -8,7 +8,7 @@ def reformat_equation(equation):
     if 'is_' in equation or 'be_' in equation:  # univariate logic expression
         return equation
     equation = equation.replace(',', '')  # remove commas
-    equation = equation.replace('%', '*.01')  # remove commas
+    equation = equation.replace('%', '*.01')
     equation = equation.replace('sin', 'SIN')
     equation = equation.replace('cos', 'COS')
     equation = equation.replace('tan', 'TAN')
