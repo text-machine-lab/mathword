@@ -8,7 +8,7 @@ def reformat_equation(equation):
     if 'is_' in equation or 'be_' in equation:  # univariate logic expression
         return equation
     equation = equation.replace(',', '')  # remove commas
-    equation = equation.replace('%', '*.01')
+    # equation = equation.replace('%', '*.01')
     equation = equation.replace('sin', 'SIN')
     equation = equation.replace('cos', 'COS')
     equation = equation.replace('tan', 'TAN')
@@ -24,7 +24,7 @@ def reformat_equation(equation):
 
     equation = equation.replace('\u221a', 'sqrt')
     equation = equation.replace('\u03c0', 'pi')
-    equation = equation.replace('\u00b0', '*pi/180')  # change degree to rad
+    # equation = equation.replace('\u00b0', '*pi/180')  # change degree to rad
     return equation.lower()
 
 if __name__ == '__main__':
@@ -37,6 +37,7 @@ if __name__ == '__main__':
         d = {}
         d['ans'] = item['ans']
         d['text'] = item['text']
+        # d['text'] = item['original_text']
         d['id'] = item['id']
 
         # parse equations

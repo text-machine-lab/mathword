@@ -1,3 +1,4 @@
+import os
 import torch
 from torch.utils.data import Dataset, DataLoader
 import json
@@ -8,24 +9,32 @@ import itertools
 import numpy as np
 import argparse
 from collections import OrderedDict
+from word2number.w2n import word_to_num  # pip install word2number
 
 import config
 from src.word2vec import build_vocab
 from transformer.Constants import *
+from scripts.preprocess import reformat_equation
 
 OPS = re.compile(r'([\+\-\*/\^\(\)=<>!;])', re.UNICODE)  # operators
 DIGITS = re.compile(r'\d*\.?\d+')
+WORDDIGITS = 'zero|one|two|three|four|five|six|seven|eight|nine'
+WORDNUM = 'one|two|three|four|five|six|seven|eight|nine|ten| \
+            eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen| \
+            eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety'
 
-def cut_zeros(s):
-    s = re.sub(r'(\d*\.\d*[1-9])0+$', r'\1', s).rstrip('.')
-    if '.' in s:
-        return s.rstrip('0.')
-    return s
+
+# def cut_zeros(s):
+#     s = re.sub(r'(\d*\.\d*[1-9])0+$', r'\1', s).rstrip('.')
+#     if '.' in s:
+#         return s.rstrip('0.')
+#     return s
 
 
 def equation_tokenize(equations, numbers):
     if not equations:
         return [], set([])
+    equations = [reformat_equation(process_percent(s)) for s in equations]
     expr = ';'.join(equations)
     text_digits = [(v, k) for k, v in numbers.items()]
     text_digits.sort(key=lambda s: len(s), reverse=True)  # process long digits first, to avoid partial replace
@@ -40,20 +49,26 @@ def equation_tokenize(equations, numbers):
         replaced = False
         start, end = match.span()
         for v, k in text_digits:
-            if cut_zeros(match.group()) == v:
+            try:
+                v_equ, v_text = round(eval(match.group()), 3), round(eval(v), 3)
+            except:  # not valid numbers
+                continue
+            if v_equ == v_text:
                 if k in unused:
                     unused.remove(k)
-                k_idx = 'N_' + chr(int(k[2:]) + ord('a'))  # so number index won't be replaced as digits
+                k_idx = 'N_' + chr(int(k[2:]) + ord('a'))  # so number index in N_1 won't be replaced as digits
                 idx2key[k_idx] = k
                 expr = expr[:start] + k_idx + expr[end:]
                 replaced = True
                 break  # replace one number only
 
-        if replaced:
-            text_digits.remove((v, k))
-        else:
+        if not replaced:
             expr = expr[:start] + '#' + expr[end:]
             unmached_digits.append(match.group())
+        else:
+            # put it on the end of the list, so it has low priority to be used
+            text_digits.remove((v, k))
+            text_digits.append((v, k))
 
     for k_idx, k in idx2key.items():
         expr = expr.replace(k_idx, k)
@@ -68,26 +83,84 @@ def equation_tokenize(equations, numbers):
     return expr.split(), unused
 
 
-# def text_tokenize(question):
-#     words = nltk.word_tokenize(question)
-#     tokens = []
-#     for word in words:
-#         pattern0 = re.match(r'([a-zA-Z]+)(\d+)', word)
-#         pattern1 = re.match(r'(\d+)([a-zA-Z]+)', word)
-#         if pattern0:
-#             tokens.append(pattern0.group(1))
-#             tokens += list(pattern0.group(2))
-#         elif pattern1:
-#             tokens += list(pattern1.group(1))
-#             tokens.append(pattern1.group(2))
-#         elif re.search(r'[\d\.\+\-/,]', word):
-#             tokens += list(word)
-#         else:
-#             tokens.append(word)
-#     return tokens
+def process_percent(s):
+    matches = re.finditer(r'(\d+\.?\d*)(%|\spercent)', s.lower())
+    offset = 0
+    for match in matches:
+        percent = float(match.group(1)) * 0.01
+        start, end = match.span()
+        insert = ' = {} '.format(percent)
+        s = s[:end+offset] + insert + s[end+offset:]
+        offset += len(insert)
+    return s
+
+
+def process_frac(s):
+    matches = re.finditer(r'(\d+\s)?(\d+/\d+)', s)
+    offset = 0
+    for match in matches:
+        start, end = match.span()
+        integ, frac = match.group(1), match.group(2)
+        if integ:
+            num = int(integ)
+        else:
+            num = 0
+        try:
+            num += round(eval(frac), 3)
+        except ZeroDivisionError:
+            print(s)
+            raise ZeroDivisionError
+        except:
+            return s
+        insert = ' = {} '.format(num)
+        s = s[:end+offset] + insert + s[end+offset:]
+        offset += len(insert)
+    else:
+        return s
+
+
+def word2digits(s):
+    while True:
+        match = re.search(r'(%s)+(\-(%s))?' %(WORDNUM, WORDDIGITS), s, re.IGNORECASE)
+        if match:
+            digits = word_to_num(match.group())
+            start, end = match.span()
+            s = s[:start] + str(digits) + s[end:]
+        else:
+            return s
+
+def add_knowledge(s):
+    text = s.lower()
+    if 'triangle' in text and "angle" in text:
+        s += ' The sum of angles is 180 degrees.'
+    if 'circle' in text and "angle" in text:
+        s += ' The sum of angles is 360 degrees.'
+    if 'min' in text and 'hour' in text:
+        s += ' 1 hour = 60 minutes.'
+    if 'min' in text and 'sec' in text:
+        s += ' 1 minute = 60 seconds.'
+    if 'hour' in text and 'day' in text:
+        s += ' 1 day = 24 hours.'
+    if 'year' in text and 'month' in text:
+        s += ' 1 year = 12 months.'
+    if 'day' in text and 'month' in text:
+        s += ' 1 month = 30 or 31 or 28 or 29 days.'
+    if re.search(r'feet|foot|ft', text) or re.search(r'\d+\'\d+\"', text):
+        s += ' 1 feet = 12 inches'
+    if re.search(r'km|kilometer', text) and re.search(r'mile|mi\.', text):
+        s += '1 mile = 1.608 km. 1 km = 0.621 miles'
+    if re.search(r'lb|pound', text) and re.search(r'ounce|oz', text):
+        s += '1 pound = 12 ounces'
 
 def text_tokenize(question):
-    question = question.replace('/', ' / ')  # break fractions
+    def preprocess(question):
+        question = word2digits(question)
+        question = process_frac(question)
+        question = process_percent(question)
+        question = question.replace('/', ' / ')  # break fractions
+        return question
+
+    question = preprocess(question)
     words = nltk.word_tokenize(question)
     tokens = []
     numbers = OrderedDict()
@@ -95,24 +168,34 @@ def text_tokenize(question):
         if word[0] == '-' and len(word) > 1:
             tokens.append('-')
             word = word[1:]
-        pattern0 = re.match(r'([a-zA-Z]+)(\d*\.?\d+)', word)
-        pattern1 = re.match(r'(\d*\.?\d+)([a-zA-Z]+)', word)
+        pattern0 = re.match(r'([a-zA-Z]+)(\d*\.?\d+)$', word)
+        pattern1 = re.match(r'(\d*\.?\d+)\-?([a-zA-Z]+)$', word)
         if pattern0:
             tokens.append(pattern0.group(1))
             number = 'N_' + str(len(numbers))
-            numbers[number] = cut_zeros(pattern0.group(2))
+            numbers[number] = pattern0.group(2)
             tokens.append(number)
 
         elif pattern1:
             number = 'N_' + str(len(numbers))
-            numbers[number] = cut_zeros(pattern1.group(1))
+            numbers[number] = pattern1.group(1)
             tokens.append(number)
             tokens.append(pattern1.group(2))
-        elif re.search(r'\d', word):
-            word = word.replace(',', '')
-            number = 'N_' + str(len(numbers))
-            numbers[number] = cut_zeros(word)
-            tokens.append(number)
+        elif re.search(DIGITS, word.replace(',', '')):
+            prev_end = 0
+            for item in re.finditer(DIGITS, word.replace(',', '')):
+                match = item.group()
+                if match[0] == '0' and len(match) > 1 and '.' not in match:  # patterns like '025' not considered digits
+                    tokens.append(match)
+                    prev_end += len(match)
+                    continue
+                start, end = item.span()
+                tokens += list(word[prev_end:start])
+                number = 'N_' + str(len(numbers))
+                numbers[number] = item.group()
+                tokens.append(number)
+                prev_end = end
+            tokens += list(word[prev_end:])
         else:
             tokens.append(word)
     return tokens, numbers
@@ -188,7 +271,11 @@ def load_data(data_files, pretrained=True, max_len=200):
             src_truncated += 1
             text_toks = text_toks[:max_len]
 
-        equation_toks, unused = equation_tokenize(d['equations'], number_dict)
+        try:
+            equation_toks, unused = equation_tokenize(d['equations'], number_dict)
+        except Exception:
+            print(d)
+            raise Exception
         if len(equation_toks) > max_len:
             # print(equation_toks)
             tgt_truncated += 1
@@ -265,13 +352,21 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--no-pretrained', action='store_true', default=False)
     parser.add_argument('--max-len', type=int, default=80)
+    parser.add_argument('--dest', default='models/')
     args = parser.parse_args()
 
     pretrained = not args.no_pretrained
-    data = load_data(['/data2/ymeng/dolphin18k/formatted/eval_linear_auto_t1.json',
-               '/data2/ymeng/dolphin18k/formatted/eval_linear_manual_t1.json'],
+    # data = load_data(['/data2/ymeng/dolphin18k/formatted/eval_linear_auto_t1.json',
+    #            '/data2/ymeng/dolphin18k/formatted/eval_linear_manual_t1.json'],
+    #                  pretrained=pretrained, max_len=args.max_len)
+    # data = load_data(['/data2/ymeng/dolphin18k/formatted/eval_linear_auto_t6.json',
+    #                   '/data2/ymeng/dolphin18k/formatted/eval_linear_manual_t6.json'],
+    #                  pretrained=pretrained, max_len=args.max_len)
+
+    data = load_data(['/data2/ymeng/dolphin18k/eval_dataset/eval_dataset_formatted.json'],
                      pretrained=pretrained, max_len=args.max_len)
-    torch.save(data, 'models/data.pt')
+    path = os.path.join(args.dest, 'data.pt')
+    torch.save(data, path)
 
 
 

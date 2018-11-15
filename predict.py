@@ -77,6 +77,7 @@ def main():
                     f.write(str(n) + ': ')
                     f.write(src_text + '\n')
                     f.write(tgt_text + '\n')
+                    f.write(preprocess_data['idx2id'][n+train_len] + '\n')
                     f.write(pred_line + '\n\n')
                     n += 1
     print('[Info] Finished.')
