@@ -2,6 +2,7 @@ import json
 import sys
 import re
 import copy
+from collections import defaultdict
 
 
 def reformat_equation(equation):
@@ -22,10 +23,28 @@ def reformat_equation(equation):
     for i, pos in enumerate(positions):
         equation = equation[:pos+i] + '*' + equation[pos+i:]
 
+    equation = replace_variables(equation)
     equation = equation.replace('\u221a', 'sqrt')
     equation = equation.replace('\u03c0', 'pi')
     # equation = equation.replace('\u00b0', '*pi/180')  # change degree to rad
     return equation.lower()
+
+
+def replace_variables(equation):
+    variables = set(re.findall(r'[a-z]', equation))
+    if 'x' in variables:
+        return equation
+
+    n_var = len(variables)
+    if n_var > 3:
+        return equation
+
+    xyz = ('x', 'y', 'z')
+    vars = sorted(list(variables))
+    for i in range(n_var):
+        equation = equation.replace(vars[i], xyz[i])
+
+    return equation
 
 if __name__ == '__main__':
     jsonfile = sys.argv[1]

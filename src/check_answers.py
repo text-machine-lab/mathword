@@ -149,7 +149,8 @@ def check_solution(answer, equations, decimals=DECIMALS, error=0.01):
     return points/n_solutions, solutions
 
 
-# def compare_equations
+def get_score(answer, eq_str, decimals=DECIMALS, error=0.01):
+    equations = eq_str.split('s')
 
 
 

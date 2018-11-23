@@ -1,6 +1,5 @@
 import os
 import torch
-from torch.utils.data import Dataset, DataLoader
 import json
 from random import shuffle
 import nltk
@@ -22,13 +21,8 @@ WORDDIGITS = 'zero|one|two|three|four|five|six|seven|eight|nine'
 WORDNUM = 'one|two|three|four|five|six|seven|eight|nine|ten| \
             eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen| \
             eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety'
-
-
-# def cut_zeros(s):
-#     s = re.sub(r'(\d*\.\d*[1-9])0+$', r'\1', s).rstrip('.')
-#     if '.' in s:
-#         return s.rstrip('0.')
-#     return s
+COMMON_CONSTANTS = set(['2', '12', '10', '100', '1000', '60', '180', '360', '3.14', '3.1416'])
+N_SYMBOLS = 10
 
 
 def equation_tokenize(equations, numbers):
@@ -87,16 +81,16 @@ def process_percent(s):
     matches = re.finditer(r'(\d+\.?\d*)(%|\spercent)', s.lower())
     offset = 0
     for match in matches:
-        percent = float(match.group(1)) * 0.01
+        percent = round(float(match.group(1)) * 0.01, 3)
         start, end = match.span()
-        insert = ' = {} '.format(percent)
+        insert = ' ( {} ) '.format(percent)
         s = s[:end+offset] + insert + s[end+offset:]
         offset += len(insert)
     return s
 
 
 def process_frac(s):
-    matches = re.finditer(r'(\d+\s)?(\d+/\d+)', s)
+    matches = re.finditer(r'(\d+\s+)?(\d+/\d+)', s)
     offset = 0
     for match in matches:
         start, end = match.span()
@@ -112,7 +106,7 @@ def process_frac(s):
             raise ZeroDivisionError
         except:
             return s
-        insert = ' = {} '.format(num)
+        insert = ' ( {} ) '.format(num)
         s = s[:end+offset] + insert + s[end+offset:]
         offset += len(insert)
     else:
@@ -121,10 +115,12 @@ def process_frac(s):
 
 def word2digits(s):
     while True:
-        match = re.search(r'(%s)+(\-(%s))?' %(WORDNUM, WORDDIGITS), s, re.IGNORECASE)
+        match = re.search(r'(\s|^)((%s)+(\-(%s))?)' %(WORDNUM, WORDDIGITS), s, re.IGNORECASE)
         if match:
-            digits = word_to_num(match.group())
+            digits = word_to_num(match.group(2))
             start, end = match.span()
+            if start != 0:
+                start += 1
             s = s[:start] + str(digits) + s[end:]
         else:
             return s
@@ -136,7 +132,7 @@ def add_knowledge(s):
     if 'circle' in text and "angle" in text:
         s += ' The sum of angles is 360 degrees.'
     if 'min' in text and 'hour' in text:
-        s += ' 1 hour = 60 minutes.'
+        s += ' 1 hour = 60 minutes = 3600 seconds.'
     if 'min' in text and 'sec' in text:
         s += ' 1 minute = 60 seconds.'
     if 'hour' in text and 'day' in text:
@@ -145,12 +141,28 @@ def add_knowledge(s):
         s += ' 1 year = 12 months.'
     if 'day' in text and 'month' in text:
         s += ' 1 month = 30 or 31 or 28 or 29 days.'
-    if re.search(r'feet|foot|ft', text) or re.search(r'\d+\'\d+\"', text):
+    if (re.search(r'feet|foot|ft', text) and re.search(r'inch|in\.', text)) or re.search(r'\d+\'\d+\"', text):
         s += ' 1 feet = 12 inches'
     if re.search(r'km|kilometer', text) and re.search(r'mile|mi\.', text):
-        s += '1 mile = 1.608 km. 1 km = 0.621 miles'
+        s += ' 1 mile = 1.608 km. 1 km = 0.621 miles'
+    if re.search(r'meter|\d\s?m', text) and re.search(r'cm|mm', text):
+        s += ' 1 m = 100 cm = 1000 mm'
+    if re.search(r'kg|kilogram', text) and re.search(r'[\s\d](gram|g\s[\.\?])', text):
+        s += ' 1 kg = 1000 g'
+    if re.search(r'liter|litre|[\s\d]l[\s\.]', text) and re.search(r'mililit|ml', text):
+        s += ' 1 L = 1000 mL'
+    if re.search(r'feet|ft', text) and re.search(r'mile|mi\.', text):
+        s += ' 1 mile = 5280 feet'
     if re.search(r'lb|pound', text) and re.search(r'ounce|oz', text):
-        s += '1 pound = 12 ounces'
+        s += ' 1 pound = 12 ounces'
+    if re.search(r'yd', text):
+        s += ' 1 yard = 3 feet = 36 inches'
+    if 'centi' in text:
+        s += 'centi = 1/100'
+    if 'milli' in text:
+        s += 'milli = 1/1000'
+
+    return s
 
 def text_tokenize(question):
     def preprocess(question):
@@ -158,6 +170,7 @@ def text_tokenize(question):
         question = process_frac(question)
         question = process_percent(question)
         question = question.replace('/', ' / ')  # break fractions
+        question = add_knowledge(question)
         return question
 
     question = preprocess(question)
@@ -183,7 +196,8 @@ def text_tokenize(question):
             tokens.append(pattern1.group(2))
         elif re.search(DIGITS, word.replace(',', '')):
             prev_end = 0
-            for item in re.finditer(DIGITS, word.replace(',', '')):
+            word = word.replace(',', '')
+            for item in re.finditer(DIGITS, word):
                 match = item.group()
                 if match[0] == '0' and len(match) > 1 and '.' not in match:  # patterns like '025' not considered digits
                     tokens.append(match)
@@ -195,7 +209,9 @@ def text_tokenize(question):
                 numbers[number] = item.group()
                 tokens.append(number)
                 prev_end = end
-            tokens += list(word[prev_end:])
+            if prev_end != len(word):
+                # print('last', prev_end, len(word))
+                tokens += list(word[prev_end:])
         else:
             tokens.append(word)
     return tokens, numbers
@@ -210,7 +226,7 @@ def get_embedding_matrix(word_vectors=None):
     EOS_WORD = '</s>'
     """
     n_special_toks = 4
-    n_number_symbols = 10
+    n_number_symbols = N_SYMBOLS
     word_indexes = {}
     embedding_matrix = np.random.uniform(low=-0.5, high=0.5,
                                          size=(len(word_vectors) + n_special_toks + n_number_symbols,
@@ -227,7 +243,9 @@ def get_embedding_matrix(word_vectors=None):
     word_indexes[EOS_WORD] = 3
 
     for i in range(n_number_symbols):
-        word_indexes['N_'+str(i)] = len(word_indexes)
+        # embedding_matrix[len(word_indexes)] = np.zeros(config.EMBEDDING_DIM)
+        # embedding_matrix[len(word_indexes)][100] = 1   # set special values for N_x... they are all the same
+        word_indexes['N_' + str(i)] = len(word_indexes)
 
     embedding_matrix[0] = embedding_matrix[1] = embedding_matrix[2] = embedding_matrix[3] = np.zeros(config.EMBEDDING_DIM)
     embedding_matrix[1][1] = 1  # use one-hot for these special characters
@@ -260,6 +278,7 @@ def load_data(data_files, pretrained=True, max_len=200):
 
     src = []
     tgt = []
+    answers = []
     numbers = []
     index = {}
     src_truncated = 0
@@ -283,11 +302,12 @@ def load_data(data_files, pretrained=True, max_len=200):
 
         for unused_number in unused:
             for x, tok in enumerate(text_toks):
-                if tok == unused_number:
+                if tok == unused_number and tok in COMMON_CONSTANTS:
                     text_toks[x] = number_dict[tok]
 
         src.append(text_toks)
         tgt.append(equation_toks)
+        answers.append(d['ans'])
         numbers.append(number_dict)
         index[i] = d['id']
 
@@ -298,7 +318,12 @@ def load_data(data_files, pretrained=True, max_len=200):
     else:
         src_indexes = get_token_indexes(itertools.chain(*src))
 
-    tgt_indexes = get_token_indexes(itertools.chain(*tgt))
+    # tgt_indexes = get_token_indexes(itertools.chain(*tgt))
+    tgt_tokens = ['N_'+str(x) for x in range(N_SYMBOLS)] + [str(x) for x in range(10)] + list(COMMON_CONSTANTS) \
+                 + ['+', '-', '*', '/', '=', '(', ')', ';', '^', 'sqrt', 'sin', 'cos', 'tan', 'cot', 'exp'] \
+                 + [chr(x+ord('a')) for x in range(26)]
+    tgt_indexes = get_token_indexes(tgt_tokens)
+
 
     data = {}
     data['dict'] = {}
@@ -316,12 +341,13 @@ def load_data(data_files, pretrained=True, max_len=200):
     tgt_idx_repr = []
     for tgt_sent in tgt:
         idx = [BOS]
-        idx += [tgt_indexes[s] for s in tgt_sent]
+        idx += [tgt_indexes[s] if s in tgt_indexes else tgt_indexes[UNK_WORD] for s in tgt_sent]
         idx.append(EOS)
         tgt_idx_repr.append(idx)
 
     data['src'] = src_idx_repr
     data['tgt'] = tgt_idx_repr
+    data['ans'] = answers
     data['numbers'] = numbers
     data['src_embeddings'] = src_embeddings
     data['settings'] = {}
