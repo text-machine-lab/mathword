@@ -11,4 +11,5 @@ if TRANSFORMER_PATH not in sys.path:
     sys.path.append(TRANSFORMER_PATH)
 
 WORD_VECTORS = '../embeddings/crawl-300d-2M.vec'
+# WORD_VECTORS = '../embeddings/glove.840B.300d.txt'
 EMBEDDING_DIM = 300

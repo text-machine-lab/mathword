@@ -6,6 +6,15 @@ from collections import defaultdict
 
 
 def reformat_equation(equation):
+    def process_percent(s):
+        matches = re.finditer(r'(\d+\.?\d*)%', s)
+        for match in matches:
+            percent = round(float(match.group(1)) * 0.01, 3)
+            s = s.replace(match.group(), str(percent), 1)
+
+        return s
+
+    equation = process_percent(equation)
     if 'is_' in equation or 'be_' in equation:  # univariate logic expression
         return equation
     equation = equation.replace(',', '')  # remove commas

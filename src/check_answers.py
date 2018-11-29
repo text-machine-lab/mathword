@@ -28,13 +28,16 @@ def solve_equations(equations):
             continue
         equation = equation.replace('e', 'E') # sympy uses E for natural log base
 
-        assert equation.count('=') == 1
+        if equation.count('=') != 1:
+            return []  # no solution
         equation = equation.replace('^', '**')
         equation = equation.replace('%', '*.01')
         equation = equation.replace('[', '(')
         equation = equation.replace(']', ')')
 
         left, right = equation.split('=')
+        if not left or not right:
+            return []
         eq = Eq(parse_expr(left), parse_expr(right))
         variables = variables.union(eq.free_symbols)
         eqs.append(eq)
@@ -76,6 +79,8 @@ def parse_answer(answer, decimals=DECIMALS):
                 vals = ans.strip('{}').split(';')
             else:
                 vals = ans.split(';')
+            if '' in vals:
+                vals.remove('')  # remove empty elements
             try:
                 vals = sorted([round(eval(x), decimals) for x in vals])
             except:
@@ -110,8 +115,8 @@ def check_solution(answer, equations, decimals=DECIMALS, error=0.01):
         try:
             assert len(ans) <= n_solutions  # <= because valid answers can be a subset of equation roots
         except AssertionError:
-            print(answer, equations)
-            traceback.print_exc()
+            # print(answer, equations)
+            # traceback.print_exc()
             # sys.exit(1)
             return 0, None
     else:
@@ -126,9 +131,8 @@ def check_solution(answer, equations, decimals=DECIMALS, error=0.01):
             else:
                 solution_vals = [round(float(solution), decimals)]
         except:
-            print(answer, equations, solution)
-            traceback.print_exc()
-            # sys.exit(1)
+            # print(answer, equations, solution)
+            # traceback.print_exc()
             return 0, None
         n_vars = len(solution_vals)
         for item in ans:  # for each valid answer

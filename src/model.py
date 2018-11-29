@@ -26,7 +26,7 @@ class Encoder(OriginalEncoder):
             self.src_word_emb = nn.Embedding(n_src_vocab, d_word_vec, padding_idx=Constants.PAD)
         else:
             self.src_word_emb = nn.Embedding.from_pretrained(
-                torch.from_numpy(embedding_matrix).type(torch.cuda.FloatTensor),freeze=True)
+                torch.from_numpy(embedding_matrix).type(torch.cuda.FloatTensor),freeze=False)
 
             print("set pretrained word embeddings, size {}".format(self.src_word_emb.weight.size()))
 
@@ -52,7 +52,7 @@ class Encoder(OriginalEncoder):
         # -- Forward
         # src_word_emb = torch.tanh(self.src_word_emb(src_seq))
         src_word_emb = self.src_word_emb(src_seq)
-        enc_output = self.src_word_enc(F.dropout(src_word_emb, p=0.3)) + self.position_enc(src_pos)
+        enc_output = self.src_word_enc(F.dropout(src_word_emb, p=0.5)) + self.position_enc(src_pos)
 
         for enc_layer in self.layer_stack:
             enc_output, enc_slf_attn = enc_layer(
@@ -165,6 +165,9 @@ class BiTransformer(nn.Module):
         nn.init.xavier_normal_(self.tgt_word_prj_lr.weight)
         nn.init.xavier_normal_(self.tgt_word_prj_rl.weight)
 
+        self.unite = nn.Linear(2*d_model, n_tgt_vocab)
+
+        # self.align = nn.GRU(d_model, n_tgt_vocab, batch_first=True)
 
     def forward(self, src_seq, src_pos, tgt_seq, tgt_seq_reversed, tgt_pos):
 
@@ -177,13 +180,21 @@ class BiTransformer(nn.Module):
 
         # right to left
         dec_output_rl, *_ = self.decoder_rl(tgt_seq_reversed, tgt_pos, src_seq, enc_output)
-        # print(dec_output_rl)
-        # sys.exit(1)
 
-        seq_logit_lr = self.tgt_word_prj_lr(dec_output_lr)
-        seq_logit_rl = self.tgt_word_prj_rl(dec_output_rl)
+        dec_output = torch.cat([dec_output_lr, dec_output_rl], -1)
 
-        return seq_logit_lr.view(-1, seq_logit_lr.size(2)), seq_logit_rl.view(-1, seq_logit_rl.size(2))
+        seq_logit_lr = self.tgt_word_prj_lr(dec_output)
+        seq_logit_rl = self.tgt_word_prj_rl(dec_output)
+        # seq_logit_nums_lr, _ = self.align(dec_output_lr)
+        # seq_logit_nums_rl, _ = self.align(dec_output_rl)
+
+        seq_logit_unite = self.unite(torch.cat([dec_output_lr, dec_output_rl], -1))
+
+        return seq_logit_lr.view(-1, seq_logit_lr.size(2)), \
+               seq_logit_rl.view(-1, seq_logit_rl.size(2)), \
+               seq_logit_unite.view(-1, seq_logit_unite.size(2))
+               # seq_logit_nums_lr.contiguous().view(-1, seq_logit_nums_lr.size(2)), \
+               # seq_logit_nums_rl.contiguous().view(-1, seq_logit_nums_rl.size(2))
 
 
 class Translator(OriginalTranslator):
