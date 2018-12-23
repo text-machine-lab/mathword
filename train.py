@@ -6,14 +6,13 @@ import argparse
 import math
 import time
 from tqdm import tqdm
-import numpy as np
-import sys
 
 import config
 from src.model import Transformer, BiTransformer, Translator
-from dataset import TranslationDataset # paired_collate_fn, bidirectional_collate_fn
+from dataset import TranslationDataset
 from transformer.Optim import ScheduledOptim
 from transformer import Constants
+import numpy as np
 
 
 def prepare_dataloaders(data, opt):
@@ -58,80 +57,31 @@ def prepare_dataloaders(data, opt):
 class Scheduler(ScheduledOptim):
     '''A simple wrapper class for learning rate scheduling'''
 
-    def __init__(self, optimizer, d_model, n_warmup_steps, n_current_steps=0):
+    def __init__(self, optimizer, d_model, n_warmup_steps, n_current_steps=0, alpha=1e-5):
         self._optimizer = optimizer
         self.n_warmup_steps = n_warmup_steps
         self.n_current_steps = n_current_steps
         # self.init_lr = np.power(d_model, -0.5)  # this is from original code
-        self.init_lr = 5e-5 * np.power(n_warmup_steps, 0.5)
+        self.init_lr = alpha * np.power(n_warmup_steps, 0.5)
 
-def cal_performance(pred, gold, smoothing=False, weight=None, training_opt=None):
+
+def cal_performance(pred, gold, smoothing=False, weight=None):
     ''' Apply label smoothing if needed '''
 
-    batch_size = gold.size()[0]
-    seq_len = gold.size()[1]
-    # if training_opt is not None:
-    #     # skip the first token for loss computation (allowing flexible equations)
-    #     pred = pred.view(batch_size, -1, pred.size(-1))
-    #     if pred.size()[1] > 3:
-    #         pred_ = pred[:,1:,:].contiguous().view(-1, pred.size(-1))
-    #         gold_ = gold[:,1:]
-    #     else:
-    #         pred_ = pred.contiguous().view(-1, pred.size(-1))
-    #         gold_ = gold
-    #     loss = cal_loss(pred_, gold_, smoothing, weight)
-    #     pred = pred.contiguous().view(-1, pred.size(-1))
-    #
-    # else:
-    loss = cal_loss(pred, gold, smoothing, weight, training_opt=training_opt)
-    pred = pred.max(1)[1]
+    loss = cal_loss(pred, gold, smoothing, weight)
 
+    pred = pred.max(1)[1]
     gold = gold.contiguous().view(-1)
     non_pad_mask = gold.ne(Constants.PAD)
     n_correct = pred.eq(gold)
     n_correct = n_correct.masked_select(non_pad_mask).sum().item()
 
-    pred = pred.view(batch_size, seq_len)
-    if training_opt and training_opt.bi:
-        gold = gold.view(batch_size, seq_len)
-        alignment_penalty = cal_alignment_penalty(pred, gold, training_opt.symbols_idx)
-        alignment_penalty = torch.FloatTensor(alignment_penalty)
-        if torch.cuda.is_available():
-            alignment_penalty = alignment_penalty.cuda()
-        loss = torch.dot(alignment_penalty, loss)
-
     return loss, n_correct
 
 
-def cal_alignment_penalty(pred_idx, gold_idx, symbols_idx):
-    def compute_distance(list0, list1):
-        length0 = len(list0)
-        length1 = len(list1)
-        penalty = abs(length0 - length1)
-        n = min(length0, length1)
-        for i in range(n):
-            if list0[i] != list1[i]:
-                penalty += 1
-        return penalty
+def cal_loss(pred, gold, smoothing, weight):
+    ''' Calculate cross entropy loss, apply label smoothing if needed. '''
 
-    assert pred_idx.size() == gold_idx.size()
-    distances = []
-    for pred, gold in zip(pred_idx, gold_idx):
-        pred_symbols = [x.item() for x in pred if x.item() in symbols_idx]
-        gold_symbols = [x.item() for x in gold if x.item() in symbols_idx]
-        distance = min(5., compute_distance(pred_symbols, gold_symbols))
-        distances.append(distance)
-
-    distances = np.exp(0.5 * np.array(distances))
-    return distances
-
-def cal_loss(pred, gold, smoothing, weight, training_opt=None):
-    ''' Calculate cross entropy loss, apply label smoothing if needed.
-       pred size = [batch*seq_len, voc_size]
-       gold size = [batch, seq_len]
-    '''
-
-    batch_size = gold.size()[0]
     gold = gold.contiguous().view(-1)
 
     if smoothing:
@@ -147,14 +97,7 @@ def cal_loss(pred, gold, smoothing, weight, training_opt=None):
         loss = loss.masked_select(non_pad_mask).sum()  # average later
 
     else:
-        if training_opt and training_opt.bi:
-            # loss size = [batch*seq_len]
-            loss = F.cross_entropy(pred, gold, weight=weight, ignore_index=Constants.PAD, reduction='none')
-            loss = loss.view(batch_size, -1)
-            loss = torch.sum(loss, dim=1)  # get size [batch]
-        else:
-            # loss is a tensor of single variable
-            loss = F.cross_entropy(pred, gold, weight=weight, ignore_index=Constants.PAD, reduction='sum')
+        loss = F.cross_entropy(pred, gold, weight=weight, ignore_index=Constants.PAD, reduction='sum')
 
     return loss
 
@@ -170,7 +113,6 @@ def train_epoch(model, training_data, optimizer, device, smoothing, **kwargs):
 
     weight = kwargs['weight']
     bidirectional = kwargs['bidirectional']
-    training_opt = kwargs['training_opt']
 
     for batch in tqdm(
             training_data, mininterval=2,
@@ -178,48 +120,29 @@ def train_epoch(model, training_data, optimizer, device, smoothing, **kwargs):
 
         optimizer.zero_grad()
 
-        data_batch = map(lambda x: x.to(device), batch)
         if bidirectional:
             # forward
-            src_seq, src_pos, tgt_seq, tgt_seq_reversed, tgt_pos, tgt_nums, tgt_nums_reversed, _ = data_batch
+            src_seq, src_pos, tgt_seq, tgt_seq_reversed, tgt_pos, *_ = map(lambda x: x.to(device), batch)
             gold_lr = tgt_seq[:, 1:]
             gold = gold_lr  # another name, for convenience
             gold_rl = tgt_seq_reversed[:, 1:]
-            # gold_nums_lr = tgt_nums[:, 1:]
-            # gold_nums_rl = tgt_nums_reversed[:, 1:]
-
             pred_lr, pred_rl = model(src_seq, src_pos, tgt_seq, tgt_seq_reversed, tgt_pos)
-            loss_lr, n_correct_lr = cal_performance(pred_lr, gold_lr, smoothing=smoothing,
-                                                    weight=weight, training_opt=None)  # training_opt controls loss
-
-            loss_rl, n_correct_rl = cal_performance(pred_rl, gold_rl, smoothing=smoothing,
-                                                    weight=weight, training_opt=None)
-            # loss_nums_lr, _ = cal_performance(pred_nums_lr, gold_nums_lr)
-            # loss_nums_rl, _ = cal_performance(pred_nums_rl, gold_nums_rl)
-
-            # print(alignment_penalty_lr, alignment_penalty_rl)
-            # sys.exit(1)
+            loss_lr, n_correct_lr = cal_performance(pred_lr, gold_lr, smoothing=smoothing, weight=weight)
+            loss_rl, n_correct_rl = cal_performance(pred_rl, gold_rl, smoothing=smoothing, weight=weight)
 
             loss = 0.5 * (loss_lr + loss_rl)
             n_correct = 0.5 * (n_correct_lr + n_correct_rl)
 
-            if gold.size()[0] <= 16:  # small batches
-                loss_lr.backward(retain_graph=True)
-                loss_rl.backward()
-
-            elif np.random.randint(2) == 0:  # make a choice for decoder to update
-                loss_lr.backward()
-            else:
-                loss_rl.backward()
-
         else:
             # forward
-            src_seq, src_pos, tgt_seq, tgt_pos, tgt_nums, _ = data_batch
+            src_seq, src_pos, tgt_seq, tgt_pos, *_ = map(lambda x: x.to(device), batch)
             gold = tgt_seq[:, 1:]
             pred = model(src_seq, src_pos, tgt_seq, tgt_pos)
             loss, n_correct = cal_performance(pred, gold, smoothing=smoothing, weight=weight)
-            # backward
-            loss.backward()
+
+        # backward
+        loss.backward()
+        # print(loss)
 
         # update parameters
         optimizer.step_and_update_lr()
@@ -252,20 +175,18 @@ def eval_epoch(model, validation_data, device, **kwargs):
                 validation_data, mininterval=2,
                 desc='  - (Validation) ', leave=False):
 
-            data_batch = map(lambda x: x.to(device), batch)
             if bidirectional:
-                src_seq, src_pos, tgt_seq, tgt_seq_reversed, tgt_pos, tgt_nums, tgt_nums_reversed, _ = data_batch
+                src_seq, src_pos, tgt_seq, tgt_seq_reversed, tgt_pos, *_ = map(lambda x: x.to(device), batch)
                 gold_lr = tgt_seq[:, 1:]
                 gold = gold_lr  # another name, for convenience
                 gold_rl = tgt_seq_reversed[:, 1:]
                 pred_lr, pred_rl = model(src_seq, src_pos, tgt_seq, tgt_seq_reversed, tgt_pos)
-
                 loss_lr, n_correct_lr = cal_performance(pred_lr, gold_lr, weight=weight)
                 loss_rl, n_correct_rl = cal_performance(pred_rl, gold_rl, weight=weight)
                 loss = 0.5 * (loss_lr + loss_rl)
                 n_correct = 0.5 * (n_correct_lr + n_correct_rl)
             else:
-                src_seq, src_pos, tgt_seq, tgt_pos, tgt_nums, _ = data_batch
+                src_seq, src_pos, tgt_seq, tgt_pos = map(lambda x: x.to(device), batch)
                 gold = tgt_seq[:, 1:]
                 pred = model(src_seq, src_pos, tgt_seq, tgt_pos)
                 loss, n_correct = cal_performance(pred, gold, weight=weight)
@@ -316,8 +237,8 @@ def train_transformer(model, training_data, validation_data, optimizer, device, 
         print('[ Epoch', epoch_i, ']')
 
         start = time.time()
-        train_loss, train_accu = train_epoch(model, training_data, optimizer, device, smoothing=opt.label_smoothing,
-                                             weight=weight, bidirectional=opt.bi, training_opt=opt)
+        train_loss, train_accu = train_epoch(
+            model, training_data, optimizer, device, smoothing=opt.label_smoothing, weight=weight, bidirectional=opt.bi)
         print('  - (Training)   ppl: {ppl: 8.5f}, accuracy: {accu:3.3f} %, '\
               'elapse: {elapse:3.3f} min'.format(
                   ppl=math.exp(min(train_loss, 100)), accu=100*train_accu,
@@ -380,7 +301,7 @@ def main():
 
     parser.add_argument('-n_head', type=int, default=8)
     parser.add_argument('-n_layers', type=int, default=6)
-    parser.add_argument('-n_warmup_steps', type=int, default=1000)
+    parser.add_argument('-n_warmup_steps', type=int, default=4000)
 
     parser.add_argument('-dropout', type=float, default=0.1)
     parser.add_argument('-embs_share_weight', action='store_true')
@@ -393,7 +314,6 @@ def main():
     parser.add_argument('-no_cuda', action='store_true')
     parser.add_argument('-label_smoothing', action='store_true')
     parser.add_argument('-load_model', type=str, default=None, help='load pretrained model')
-    parser.add_argument('-step', type=int, default=0, help='set initial step (related to learning rate)')
 
     opt = parser.parse_args()
     opt.cuda = not opt.no_cuda
@@ -408,8 +328,8 @@ def main():
     opt.src_vocab_size = training_data.dataset.src_vocab_size
     opt.tgt_vocab_size = training_data.dataset.tgt_vocab_size
 
-    opt.ops_idx = [data['dict']['tgt'][s] for s in ('+', '-', '*', '/')]  # indexes of operators
-    opt.symbols_idx = [v for k, v in data['dict']['tgt'].items() if k[0] == 'N']
+    ops_idx = [data['dict']['tgt'][s] for s in ('+', '-', '*', '/')]
+    opt.ops_idx = ops_idx  # indexes of operators
 
     # ========= Preparing Model =========#
     if opt.embs_share_weight:
@@ -457,7 +377,7 @@ def main():
         optim.Adam(
             filter(lambda x: x.requires_grad, transformer.parameters()),
             betas=(0.9, 0.98), eps=1e-09),
-        opt.d_model, opt.n_warmup_steps, n_current_steps=opt.step)
+        opt.d_model, opt.n_warmup_steps)
 
     if opt.load_model is not None:
         checkpoint = torch.load(opt.load_model)

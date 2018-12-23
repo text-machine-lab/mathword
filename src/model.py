@@ -8,7 +8,12 @@ from transformer.Translator import Translator as OriginalTranslator
 import torch.nn.functional as F
 import copy
 import sys
+import time
 
+def print_grad(name):
+    def hook(grad):
+        print('{} grad: {}'.format(name, grad))
+    return hook
 
 class Encoder(OriginalEncoder):
     """Modify original encoder to allow pretrained embeddings"""
@@ -26,7 +31,7 @@ class Encoder(OriginalEncoder):
             self.src_word_emb = nn.Embedding(n_src_vocab, d_word_vec, padding_idx=Constants.PAD)
         else:
             self.src_word_emb = nn.Embedding.from_pretrained(
-                torch.from_numpy(embedding_matrix).type(torch.cuda.FloatTensor),freeze=False)
+                torch.from_numpy(embedding_matrix).type(torch.cuda.FloatTensor),freeze=True)
 
             print("set pretrained word embeddings, size {}".format(self.src_word_emb.weight.size()))
 
@@ -52,7 +57,7 @@ class Encoder(OriginalEncoder):
         # -- Forward
         # src_word_emb = torch.tanh(self.src_word_emb(src_seq))
         src_word_emb = self.src_word_emb(src_seq)
-        enc_output = self.src_word_enc(F.dropout(src_word_emb, p=0.5)) + self.position_enc(src_pos)
+        enc_output = self.src_word_enc(F.dropout(src_word_emb, p=0.3)) + self.position_enc(src_pos)
 
         for enc_layer in self.layer_stack:
             enc_output, enc_slf_attn = enc_layer(
@@ -165,9 +170,6 @@ class BiTransformer(nn.Module):
         nn.init.xavier_normal_(self.tgt_word_prj_lr.weight)
         nn.init.xavier_normal_(self.tgt_word_prj_rl.weight)
 
-        self.unite = nn.Linear(2*d_model, n_tgt_vocab)
-
-        # self.align = nn.GRU(d_model, n_tgt_vocab, batch_first=True)
 
     def forward(self, src_seq, src_pos, tgt_seq, tgt_seq_reversed, tgt_pos):
 
@@ -180,21 +182,13 @@ class BiTransformer(nn.Module):
 
         # right to left
         dec_output_rl, *_ = self.decoder_rl(tgt_seq_reversed, tgt_pos, src_seq, enc_output)
+        # print(dec_output_rl)
+        # sys.exit(1)
 
-        dec_output = torch.cat([dec_output_lr, dec_output_rl], -1)
+        seq_logit_lr = self.tgt_word_prj_lr(dec_output_lr)
+        seq_logit_rl = self.tgt_word_prj_rl(dec_output_rl)
 
-        seq_logit_lr = self.tgt_word_prj_lr(dec_output)
-        seq_logit_rl = self.tgt_word_prj_rl(dec_output)
-        # seq_logit_nums_lr, _ = self.align(dec_output_lr)
-        # seq_logit_nums_rl, _ = self.align(dec_output_rl)
-
-        seq_logit_unite = self.unite(torch.cat([dec_output_lr, dec_output_rl], -1))
-
-        return seq_logit_lr.view(-1, seq_logit_lr.size(2)), \
-               seq_logit_rl.view(-1, seq_logit_rl.size(2)), \
-               seq_logit_unite.view(-1, seq_logit_unite.size(2))
-               # seq_logit_nums_lr.contiguous().view(-1, seq_logit_nums_lr.size(2)), \
-               # seq_logit_nums_rl.contiguous().view(-1, seq_logit_nums_rl.size(2))
+        return seq_logit_lr.view(-1, seq_logit_lr.size(2)), seq_logit_rl.view(-1, seq_logit_rl.size(2))
 
 
 class Translator(OriginalTranslator):
@@ -214,7 +208,7 @@ class Translator(OriginalTranslator):
             self.opt.bi = self.model_opt.bi
             print("Bidirectional = {}".format(self.opt.bi))
 
-            if opt.bi:
+            if self.opt.bi:
                 model = BiTransformer(
                     model_opt.src_vocab_size,
                     model_opt.tgt_vocab_size,
@@ -253,9 +247,9 @@ class Translator(OriginalTranslator):
         model = model.to(self.device)
 
         self.model = model
-        self.model.eval()
+        # self.model.eval()
 
-    def translate_batch(self, raw_src_seq, raw_src_pos, block=None):
+    def translate_batch(self, raw_src_seq, raw_src_pos, block_list=[]):
         ''' Translation work in one batch '''
 
         def get_inst_idx_to_tensor_position_map(inst_idx_list):
@@ -285,6 +279,8 @@ class Translator(OriginalTranslator):
 
             active_src_seq = collect_active_part(src_seq, active_inst_idx, n_prev_active_inst, n_bm)
             active_src_enc = collect_active_part(src_enc, active_inst_idx, n_prev_active_inst, n_bm)
+            # active_src_enc.register_hook(print_grad('active src enc'))
+            active_src_enc[torch.isnan(active_src_enc)] = 0
             active_inst_idx_to_position_map = get_inst_idx_to_tensor_position_map(active_inst_idx_list)
 
             return active_src_seq, active_src_enc, active_inst_idx_to_position_map
@@ -302,12 +298,20 @@ class Translator(OriginalTranslator):
 
         def predict_word(decoder, tgt_word_prj, dec_seq, dec_pos, src_seq, enc_output, n_active_inst, n_bm):
             """decoder is added as an argument, compared to the original version"""
+            # sometimes the output is only [0] the pad token
+
             dec_output, *_ = decoder(dec_seq, dec_pos, src_seq, enc_output)
             dec_output = dec_output[:, -1, :]  # Pick the last step: (bh * bm) * d_h
+            # dec_output[torch.isnan(dec_output)] = 0
+
+            # dec_output.register_hook(print_grad('dec_output in predict_word {} data'.format(dec_seq)))
+            # print(dec_output)
             word_prob = F.log_softmax(tgt_word_prj(dec_output), dim=1)
+            # word_prob.register_hook(print_grad('word prob in predict_word'))
             word_prob = word_prob.view(n_active_inst, n_bm, -1)
-            if block is not None:
-                word_prob[:,:,block] = -1000.
+            if block_list != []:
+                for block_tok in block_list:
+                    word_prob[:,:,block_tok] = -1000.
 
             return word_prob
 
@@ -327,11 +331,13 @@ class Translator(OriginalTranslator):
                 decoder is added as an argument, compared to the original version
             '''
 
+            # enc_output.register_hook(print_grad('enc output'))
             n_active_inst = len(inst_idx_to_position_map)
 
             dec_seq = prepare_beam_dec_seq(inst_dec_beams, len_dec_seq)
             dec_pos = prepare_beam_dec_pos(len_dec_seq, n_active_inst, n_bm)
             word_prob = predict_word(decoder, tgt_word_prj, dec_seq, dec_pos, src_seq, enc_output, n_active_inst, n_bm)
+            # word_prob.register_hook(print_grad('word prob in beam decode'))  # grad ok
 
             # Update the beam with predicted word prob information and collect incomplete instances
             active_inst_idx_list = collect_active_inst_idx_list(
@@ -343,61 +349,69 @@ class Translator(OriginalTranslator):
             all_hyp, all_scores = [], []
             for inst_idx in range(len(inst_dec_beams)):
                 scores, tail_idxs = inst_dec_beams[inst_idx].sort_scores()
-                all_scores += [scores[:n_best]]
+                # scores.register_hook(print_grad('scores from collect hypothses'))
+                all_scores = all_scores + [scores[:n_best]]
 
                 hyps = [inst_dec_beams[inst_idx].get_hypothesis(i) for i in tail_idxs[:n_best]]
                 all_hyp += [hyps]
             return all_hyp, all_scores
 
-        with torch.no_grad():
-            if self.opt.bi:
-                decoders = [self.model.decoder_lr, self.model.decoder_rl]
-                tgt_word_prjs = [self.model.tgt_word_prj_lr, self.model.tgt_word_prj_rl]
-            else:
-                decoders = [self.model.decoder]
-                tgt_word_prjs = [self.model.tgt_word_prj]
-            batch_hyp_list = []  # list of results from each decoder
-            batch_scores_list = []
+        if self.opt.bi:
+            decoders = [self.model.decoder_lr, self.model.decoder_rl]
+            tgt_word_prjs = [self.model.tgt_word_prj_lr, self.model.tgt_word_prj_rl]
+        else:
+            decoders = [self.model.decoder]
+            tgt_word_prjs = [self.model.tgt_word_prj]
+        batch_hyp_list = []  # list of results from each decoder
+        batch_scores_list = []
 
-            n_bm = self.opt.beam_size
+        n_bm = self.opt.beam_size
 
-            # -- Decode
-            for decoder, tgt_word_prj in zip(decoders, tgt_word_prjs):  # two decoders for bidirectional model
-                src_seq = copy.copy(raw_src_seq)
-                src_pos = copy.copy(raw_src_pos)
+        # -- Decode
+        for decoder, tgt_word_prj in zip(decoders, tgt_word_prjs):  # two decoders for bidirectional model
+            src_seq = copy.copy(raw_src_seq)
+            src_pos = copy.copy(raw_src_pos)
 
-                #-- Encode
-                src_seq, src_pos = src_seq.to(self.device), src_pos.to(self.device)
-                src_enc, *_ = self.model.encoder(src_seq, src_pos)
+            #-- Encode
+            src_seq, src_pos = src_seq.to(self.device), src_pos.to(self.device)
+            src_enc, *_ = self.model.encoder(src_seq, src_pos)
 
-                #-- Repeat data for beam search
-                n_inst, len_s, d_h = src_enc.size()
-                src_seq = src_seq.repeat(1, n_bm).view(n_inst * n_bm, len_s)
-                src_enc = src_enc.repeat(1, n_bm, 1).view(n_inst * n_bm, len_s, d_h)
+            #-- Repeat data for beam search
+            n_inst, len_s, d_h = src_enc.size()
+            src_seq = src_seq.repeat(1, n_bm).view(n_inst * n_bm, len_s)
+            # src_enc = src_enc.repeat(1, n_bm, 1).view(n_inst * n_bm, len_s, d_h)
+            src_enc = src_enc.unsqueeze(1).expand(-1, n_bm, -1, -1).contiguous().view(n_inst * n_bm, len_s, d_h)
 
-                #-- Prepare beams
-                inst_dec_beams = [Beam(n_bm, device=self.device) for _ in range(n_inst)]
+            # src_enc.register_hook(print_grad('{}, src_enc'.format(src_enc.size())))
 
-                # -- Bookkeeping for active or not
-                active_inst_idx_list = list(range(n_inst))
-                inst_idx_to_position_map = get_inst_idx_to_tensor_position_map(active_inst_idx_list)
+            #-- Prepare beams
+            inst_dec_beams = [Beam(n_bm, device=self.device) for _ in range(n_inst)]
 
-                for len_dec_seq in range(1, self.model_opt.max_token_seq_len + 1):
+            # -- Bookkeeping for active or not
+            active_inst_idx_list = list(range(n_inst))
+            inst_idx_to_position_map = get_inst_idx_to_tensor_position_map(active_inst_idx_list)
 
-                    active_inst_idx_list = beam_decode_step(
-                        decoder, tgt_word_prj, inst_dec_beams, len_dec_seq, src_seq, src_enc, inst_idx_to_position_map, n_bm)
+            for len_dec_seq in range(1, self.model_opt.max_token_seq_len + 1):
 
-                    if not active_inst_idx_list:
-                        break  # all instances have finished their path to <EOS>
+                # if len_dec_seq > 30:  # abnormally long seq
+                #     print(len_dec_seq)
 
-                    src_seq, src_enc, inst_idx_to_position_map = collate_active_info(
-                        src_seq, src_enc, inst_idx_to_position_map, active_inst_idx_list)
+                active_inst_idx_list = beam_decode_step(
+                    decoder, tgt_word_prj, inst_dec_beams, len_dec_seq, src_seq, src_enc, inst_idx_to_position_map, n_bm)
 
-                batch_hyp, batch_scores = collect_hypothesis_and_scores(inst_dec_beams, self.opt.n_best)
-                # print('\n')
-                # print(batch_hyp)
-                # print(batch_scores)
-                batch_hyp_list.append(batch_hyp)
-                batch_scores_list.append(batch_scores)
+                # src_enc[torch.isnan(src_enc)] = 0
+                if not active_inst_idx_list:
+                    break  # all instances have finished their path to <EOS>
+
+                src_seq, src_enc, inst_idx_to_position_map = collate_active_info(
+                    src_seq, src_enc, inst_idx_to_position_map, active_inst_idx_list)
+                # src_enc.register_hook(print_grad('active src enc'))  # GRAD OK HERE
+
+            # batch_hyp is a nested list of [batches [n_best seqs] ]
+            batch_hyp, batch_scores = collect_hypothesis_and_scores(inst_dec_beams, self.opt.n_best)
+            # print('\n')
+            # print(batch_scores)
+            batch_hyp_list.append(batch_hyp)
+            batch_scores_list.append(batch_scores)
 
         return batch_hyp_list, batch_scores_list

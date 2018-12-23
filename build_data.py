@@ -171,13 +171,14 @@ def word2digits(s):
     s = re.sub(r'(\d+\.?\d*)\scents', r'$\1%', s, flags=re.IGNORECASE)
 
     while True:
-        match = re.search(r'(\s|^)((%s)+(\-(%s))?)' %(WORDNUM, WORDDIGITS), s, re.IGNORECASE)
+        match = re.search(r'(\s|^)((%s)+(\-(%s))?)([^\w]|$)' %(WORDNUM, WORDDIGITS), s, re.IGNORECASE)
+        # print( match.group(2), match.group(6))
         if match and match.group(2) not in ('one', 'One'):
             digits = word_to_num(match.group(2))
             start, end = match.span()
             if start != 0:
                 start += 1
-            s = s[:start] + str(digits) + s[end:]
+            s = s[:start] + str(digits) + s[end-1:]
         else:
             break
     match = re.search(r'(\d+)\shundred', s)
@@ -228,7 +229,7 @@ def add_knowledge(s):
     if re.search(r'feet|ft', text) and re.search(r'mile|mi\.', text):
         s += ' 1 mile = 5280 feet'
     if re.search(r'lb|pound', text) and re.search(r'ounce|oz', text):
-        s += ' 1 pound = 12 ounces'
+        s += ' 1 pound = 16 ounces'
     if re.search(r'yd|yard', text):
         s += ' 1 yard = 3 feet = 36 inches'
     if 'centi' in text:
@@ -408,7 +409,7 @@ def load_data(data_files, pretrained=True, max_len=200):
     print("src truncated {}, tgt truncated {}".format(src_truncated, tgt_truncated))
     if pretrained:
         # src_vocab = build_vocab(itertools.chain(*src), config.WORD_VECTORS, K=50000)
-        src_vocab = get_vocab(itertools.chain(*src), config.WORD_VECTORS, cutoff=10)
+        src_vocab = get_vocab(itertools.chain(*src), config.WORD_VECTORS, cutoff=8)
         special_symbols = ['N_' + str(i) for i in range(N_SYMBOLS)] + [PAD_WORD, UNK_WORD, BOS_WORD, EOS_WORD]
         for symbol in special_symbols:
             if symbol in src_vocab:

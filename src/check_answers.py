@@ -71,7 +71,7 @@ def parse_answer(answer, decimals=DECIMALS):
         ansset = []  # distinctive answers to a question
         for ans in valid_answers:
             ans = ans.strip()
-            ans = re.sub('[a-z$]+[\^2-3]*', '', ans)
+            ans = re.sub('[a-zA-Z$]+[\^2-3]*', '', ans)
             ans = re.sub('\s+/', '', ans)
 
             # for now, answers with {} or not are not distinguished. may handle it in the future
@@ -84,8 +84,8 @@ def parse_answer(answer, decimals=DECIMALS):
             try:
                 vals = sorted([round(eval(x), decimals) for x in vals])
             except:
-                logging.warning("cannot convert to real values: {}".format(vals))
-                print(vals)
+                # logging.warning("cannot convert to real values: {}".format(vals))
+                # print(vals)
                 continue
             ansset.append(vals)
         ansformats.append(ansset)
@@ -104,9 +104,10 @@ def check_solution(answer, equations, decimals=DECIMALS, error=0.01):
     try:
         solutions = solve_equations(equations)
     except:
-        print(answer, equations)
-        traceback.print_exc()
-        sys.exit(1)
+        # print(answer, equations)
+        # traceback.print_exc()
+        # sys.exit(1)
+        return 0, []
     if solutions == []:
         return 0, []
     ans = parse_answer(answer)
