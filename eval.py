@@ -23,7 +23,9 @@ def main():
         except:
             score = 0
         all_scores += round(score + 0.1)
-    # print("Truth accuracy: {:.3f}  -- {} out of {} correct.".format(all_scores/n, int(all_scores), n))
+        # if score == 1:
+        #     print(equations, solution)
+        #     all_scores += score
     print("Solution accuracy: {:.3f}  -- {} out of {} correct.".format(all_scores / n, int(all_scores), n))
 
 if __name__ == '__main__':

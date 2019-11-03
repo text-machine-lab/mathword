@@ -4,6 +4,8 @@ import torch.utils.data
 import config
 from transformer import Constants
 import sys
+import copy
+import random
 from src.math_laws import permute_tgt
 
 #
@@ -115,6 +117,27 @@ class TranslationDataset(torch.utils.data.Dataset):
             return self._src_insts[idx], self._tgt_insts[idx], self._tgt_nums[idx]
         return self._src_insts[idx]
 
+    # def permute_nums(self, insts):
+    #     """permute the number symbols"""
+    #     for src_inst, tgt_inst, nums in zip(*insts):
+    #         keys = nums[1:-1] if nums[0] == Constants.BOS else nums
+    #         values = copy.copy(keys)
+    #         random.shuffle(values)
+    #
+    #         num_map = {}
+    #         num_map[Constants.BOS] = Constants.BOS
+    #         num_map[Constants.EOS] = Constants.EOS
+    #
+    #         for key, value in zip(keys, values):
+    #             key_symbol = self.tgt_idx2word[key]
+    #             value_symbol = self.tgt_idx2word[value]
+    #             value_symbol = key_symbol[0] + value_symbol[1:]
+    #             value = self.tgt_word2idx[value_symbol]
+    #             num_map[key] = value
+    #         tgt_inst = [num_map.get(x, x) for x in tgt_inst]
+    #
+    #         src_inst = [num_map.get(x, x) for x in src_inst]
+
     def paired_collate_fn(self, insts):
         src_insts, tgt_insts, tgt_nums_insts = list(zip(*insts))
         src_insts = self.collate_fn(src_insts)
@@ -132,7 +155,7 @@ class TranslationDataset(torch.utils.data.Dataset):
         tgt_nums_insts = self.collate_fn(tgt_nums_insts, reverse=True, max_len=tgt_insts[0].size()[-1])
         return (*src_insts, *tgt_insts, *tgt_nums_insts)
 
-    def collate_fn(self, insts, reverse=False, max_len=None):
+    def collate_fn(self, insts, reverse=False, max_len=None, permute_nums=False):
         ''' Pad the instance to the max seq length in batch '''
 
         if max_len is None:

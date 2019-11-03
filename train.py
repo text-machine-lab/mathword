@@ -10,7 +10,7 @@ from tqdm import tqdm
 import config
 from src.model import Transformer, BiTransformer, Translator
 from dataset import TranslationDataset
-from transformer.Optim import ScheduledOptim
+# from transformer.Optim import ScheduledOptim
 from transformer import Constants
 import numpy as np
 
@@ -18,14 +18,39 @@ import numpy as np
 def prepare_dataloaders(data, opt):
     # ========= Preparing DataLoader =========#
 
-    train_len = int(data['settings']['n_instances'] * opt.split)
+    N = data['settings']['n_instances']
+    train_len = int(N * opt.split)
+    start_idx = int(opt.offset * N)
+    print("Data split: {}".format(opt.split))
+    print("Training starts at: {} out of {} instances".format(start_idx, N))
+
+    if start_idx + train_len < N:
+        train_src_insts = data['src'][start_idx: start_idx + train_len]
+        train_tgt_insts = data['tgt'][start_idx: start_idx + train_len]
+        train_tgt_nums = data['tgt_nums'][start_idx: start_idx + train_len]
+
+        valid_src_insts = data['src'][start_idx + train_len:] + data['src'][:start_idx]
+        valid_tgt_insts = data['tgt'][start_idx + train_len:] + data['tgt'][:start_idx]
+        valid_tgt_nums = data['tgt_nums'][start_idx + train_len:] + data['tgt_nums'][:start_idx]
+    else:
+        valid_len = N - train_len
+        valid_start_idx = start_idx - valid_len
+
+        train_src_insts = data['src'][start_idx:] + data['src'][:valid_start_idx]
+        train_tgt_insts = data['tgt'][start_idx:] + data['tgt'][:valid_start_idx]
+        train_tgt_nums = data['tgt_nums'][start_idx:] + data['tgt_nums'][:valid_start_idx]
+
+        valid_src_insts = data['src'][valid_start_idx: start_idx]
+        valid_tgt_insts = data['tgt'][valid_start_idx: start_idx]
+        valid_tgt_nums = data['tgt_nums'][valid_start_idx: start_idx]
+
     train_loader = torch.utils.data.DataLoader(
         TranslationDataset(
             src_word2idx=data['dict']['src'],
             tgt_word2idx=data['dict']['tgt'],
-            src_insts=data['src'][:train_len],
-            tgt_insts=data['tgt'][:train_len],
-            tgt_nums=data['tgt_nums'][:train_len],
+            src_insts=train_src_insts,
+            tgt_insts=train_tgt_insts,
+            tgt_nums=train_tgt_nums,
             permute_tgt=False),
         num_workers=2,
         batch_size=opt.batch_size,
@@ -36,9 +61,9 @@ def prepare_dataloaders(data, opt):
         TranslationDataset(
             src_word2idx=data['dict']['src'],
             tgt_word2idx=data['dict']['tgt'],
-            src_insts=data['src'][train_len:],
-            tgt_insts=data['tgt'][train_len:],
-            tgt_nums=data['tgt_nums'][train_len:],
+            src_insts=valid_src_insts,
+            tgt_insts=valid_tgt_insts,
+            tgt_nums=valid_tgt_nums,
             permute_tgt=False),
         num_workers=2,
         batch_size=opt.batch_size)
@@ -54,15 +79,35 @@ def prepare_dataloaders(data, opt):
     return train_loader, valid_loader
 
 
-class Scheduler(ScheduledOptim):
+class Scheduler():
     '''A simple wrapper class for learning rate scheduling'''
 
-    def __init__(self, optimizer, d_model, n_warmup_steps, n_current_steps=0, alpha=1e-5):
+    def __init__(self, optimizer, n_current_steps=0, alpha=1e-7, update_steps=100):
         self._optimizer = optimizer
-        self.n_warmup_steps = n_warmup_steps
         self.n_current_steps = n_current_steps
-        # self.init_lr = np.power(d_model, -0.5)  # this is from original code
-        self.init_lr = alpha * np.power(n_warmup_steps, 0.5)
+        self.init_lr = alpha
+        self.update_steps = update_steps
+
+    def step_and_update_lr(self):
+        "Step with the inner optimizer"
+        self._update_learning_rate()
+        self._optimizer.step()
+
+    def zero_grad(self):
+        "Zero out the gradients by the inner optimizer"
+        self._optimizer.zero_grad()
+
+    def _get_lr_scale(self):
+        return np.power(0.5, self.n_current_steps // self.update_steps)
+
+    def _update_learning_rate(self):
+        ''' Learning rate scheduling per step '''
+
+        # self.n_current_steps += 1
+        lr = self.init_lr * self._get_lr_scale()
+
+        for param_group in self._optimizer.param_groups:
+            param_group['lr'] = lr
 
 
 def cal_performance(pred, gold, smoothing=False, weight=None):
@@ -106,6 +151,7 @@ def train_epoch(model, training_data, optimizer, device, smoothing, **kwargs):
     ''' Epoch operation in training phase'''
 
     model.train()
+    optimizer.n_current_steps += 1
 
     total_loss = 0
     n_word_total = 0
@@ -146,6 +192,7 @@ def train_epoch(model, training_data, optimizer, device, smoothing, **kwargs):
 
         # update parameters
         optimizer.step_and_update_lr()
+        # print("get_lr_scale", optimizer._get_lr_scale())
 
         # note keeping
         total_loss += loss.item()
@@ -186,7 +233,7 @@ def eval_epoch(model, validation_data, device, **kwargs):
                 loss = 0.5 * (loss_lr + loss_rl)
                 n_correct = 0.5 * (n_correct_lr + n_correct_rl)
             else:
-                src_seq, src_pos, tgt_seq, tgt_pos = map(lambda x: x.to(device), batch)
+                src_seq, src_pos, tgt_seq, tgt_pos, *_ = map(lambda x: x.to(device), batch)
                 gold = tgt_seq[:, 1:]
                 pred = model(src_seq, src_pos, tgt_seq, tgt_pos)
                 loss, n_correct = cal_performance(pred, gold, weight=weight)
@@ -286,9 +333,10 @@ def main():
 
     parser.add_argument('-data', required=True)
     parser.add_argument('-split', type=float, default=0.8, help="portion for training")
+    parser.add_argument('-offset', type=float, default=0, help="determin starting index of training set, for cross validation")
 
-    parser.add_argument('-epoch', type=int, default=10)
-    parser.add_argument('-batch_size', type=int, default=32)
+    parser.add_argument('-epoch', type=int, default=100)
+    parser.add_argument('-batch_size', type=int, default=128)
     parser.add_argument('-bi', action='store_true')
 
     parser.add_argument('-d_word_vec', type=int, default=300,
@@ -300,8 +348,8 @@ def main():
     parser.add_argument('-d_v', type=int, default=64)
 
     parser.add_argument('-n_head', type=int, default=8)
-    parser.add_argument('-n_layers', type=int, default=6)
-    parser.add_argument('-n_warmup_steps', type=int, default=4000)
+    parser.add_argument('-n_layers', type=int, default=3)
+    # parser.add_argument('-n_warmup_steps', type=int, default=4000)
 
     parser.add_argument('-dropout', type=float, default=0.1)
     parser.add_argument('-embs_share_weight', action='store_true')
@@ -309,7 +357,7 @@ def main():
 
     parser.add_argument('-log', default=None)
     parser.add_argument('-save_model', default=None)
-    parser.add_argument('-save_mode', type=str, choices=['all', 'best', 'last'], default='best')
+    parser.add_argument('-save_mode', type=str, choices=['all', 'best', 'last'], default='last')
 
     parser.add_argument('-no_cuda', action='store_true')
     parser.add_argument('-label_smoothing', action='store_true')
@@ -329,6 +377,7 @@ def main():
     opt.tgt_vocab_size = training_data.dataset.tgt_vocab_size
 
     ops_idx = [data['dict']['tgt'][s] for s in ('+', '-', '*', '/')]
+    # ops_idx = None
     opt.ops_idx = ops_idx  # indexes of operators
 
     # ========= Preparing Model =========#
@@ -377,7 +426,7 @@ def main():
         optim.Adam(
             filter(lambda x: x.requires_grad, transformer.parameters()),
             betas=(0.9, 0.98), eps=1e-09),
-        opt.d_model, opt.n_warmup_steps)
+            alpha=5e-5, n_current_steps=0)  # 5e-5
 
     if opt.load_model is not None:
         checkpoint = torch.load(opt.load_model)

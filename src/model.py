@@ -2,7 +2,8 @@ import torch
 import torch.nn as nn
 import transformer.Constants as Constants
 from transformer.Models import Encoder as OriginalEncoder
-from transformer.Models import get_sinusoid_encoding_table, EncoderLayer, Decoder, get_non_pad_mask, get_attn_key_pad_mask
+from transformer.Models import Decoder as OriginalDecoder
+from transformer.Models import get_sinusoid_encoding_table, EncoderLayer, get_non_pad_mask, get_attn_key_pad_mask, get_subsequent_mask
 from transformer.Beam import Beam
 from transformer.Translator import Translator as OriginalTranslator
 import torch.nn.functional as F
@@ -36,6 +37,7 @@ class Encoder(OriginalEncoder):
             print("set pretrained word embeddings, size {}".format(self.src_word_emb.weight.size()))
 
         self.src_word_enc = nn.Linear(d_word_vec, d_model)  # need this because d_word_vec != d_model
+        self.src_enc_dropout = nn.Dropout(p=0.5)  # token embedding dropout
 
         self.position_enc = nn.Embedding.from_pretrained(
             get_sinusoid_encoding_table(n_position, d_model, padding_idx=0),
@@ -55,9 +57,8 @@ class Encoder(OriginalEncoder):
         non_pad_mask = get_non_pad_mask(src_seq)
 
         # -- Forward
-        # src_word_emb = torch.tanh(self.src_word_emb(src_seq))
-        src_word_emb = self.src_word_emb(src_seq)
-        enc_output = self.src_word_enc(F.dropout(src_word_emb, p=0.3)) + self.position_enc(src_pos)
+        src_word_emb = self.src_enc_dropout(self.src_word_emb(src_seq))
+        enc_output = F.tanh(self.src_word_enc(src_word_emb)) + self.position_enc(src_pos)
 
         for enc_layer in self.layer_stack:
             enc_output, enc_slf_attn = enc_layer(
@@ -70,6 +71,39 @@ class Encoder(OriginalEncoder):
         if return_attns:
             return enc_output, enc_slf_attn_list
         return enc_output,
+
+
+class Decoder(OriginalDecoder):
+    def forward(self, tgt_seq, tgt_pos, src_seq, enc_output, return_attns=False):
+
+        dec_slf_attn_list, dec_enc_attn_list = [], []
+
+        # -- Prepare masks
+        non_pad_mask = get_non_pad_mask(tgt_seq)
+
+        slf_attn_mask_subseq = get_subsequent_mask(tgt_seq)
+        slf_attn_mask_keypad = get_attn_key_pad_mask(seq_k=tgt_seq, seq_q=tgt_seq)
+        slf_attn_mask = (slf_attn_mask_keypad + slf_attn_mask_subseq).gt(0)
+
+        dec_enc_attn_mask = get_attn_key_pad_mask(seq_k=src_seq, seq_q=tgt_seq)
+
+        # -- Forward
+        dec_output = self.tgt_word_emb(tgt_seq) + self.position_enc(tgt_pos)
+
+        for dec_layer in self.layer_stack:
+            dec_output, dec_slf_attn, dec_enc_attn = dec_layer(
+                dec_output, enc_output,
+                non_pad_mask=non_pad_mask,
+                slf_attn_mask=slf_attn_mask,
+                dec_enc_attn_mask=dec_enc_attn_mask)
+
+            if return_attns:
+                dec_slf_attn_list += [dec_slf_attn]
+                dec_enc_attn_list += [dec_enc_attn]
+
+        if return_attns:
+            return dec_output, dec_slf_attn_list, dec_enc_attn_list
+        return dec_output,
 
 
 class Transformer(nn.Module):
@@ -105,9 +139,9 @@ class Transformer(nn.Module):
         self.tgt_word_prj = nn.Linear(d_model, n_tgt_vocab, bias=False)
         nn.init.xavier_normal_(self.tgt_word_prj.weight)
 
-        # assert d_model == d_word_vec, \
-        # 'To facilitate the residual connections, \
-        #  the dimensions of all module outputs shall be the same.'
+        self.aux_tgt_word_prj = nn.Linear(d_model, n_tgt_vocab, bias=False)
+        nn.init.xavier_normal_(self.aux_tgt_word_prj.weight)
+
 
         if tgt_emb_prj_weight_sharing:
             # Share the weight matrix between target word embedding & the final logit dense layer
@@ -127,8 +161,8 @@ class Transformer(nn.Module):
 
         enc_output, *_ = self.encoder(src_seq, src_pos)
         dec_output, *_ = self.decoder(tgt_seq, tgt_pos, src_seq, enc_output)
-        seq_logit = self.tgt_word_prj(dec_output) * self.x_logit_scale
 
+        seq_logit = self.tgt_word_prj(dec_output) * self.x_logit_scale
         return seq_logit.view(-1, seq_logit.size(2))
 
 
@@ -170,20 +204,20 @@ class BiTransformer(nn.Module):
         nn.init.xavier_normal_(self.tgt_word_prj_lr.weight)
         nn.init.xavier_normal_(self.tgt_word_prj_rl.weight)
 
+        self.aux_tgt_word_prj_lr = nn.Linear(d_model, n_tgt_vocab, bias=False)
+        self.aux_tgt_word_prj_rl = nn.Linear(d_model, n_tgt_vocab, bias=False)
+        nn.init.xavier_normal_(self.aux_tgt_word_prj_lr.weight)
+        nn.init.xavier_normal_(self.aux_tgt_word_prj_rl.weight)
 
-    def forward(self, src_seq, src_pos, tgt_seq, tgt_seq_reversed, tgt_pos):
+    def forward(self, src_seq, src_pos, tgt_seq, tgt_seq_reversed, tgt_pos, return_intermediate=False):
 
         tgt_seq, tgt_seq_reversed, tgt_pos = tgt_seq[:, :-1], tgt_seq_reversed[:, :-1], tgt_pos[:, :-1]
         # print(tgt_seq_reversed)
 
-        # left to right
         enc_output, *_ = self.encoder(src_seq, src_pos)
-        dec_output_lr, *_ = self.decoder_lr(tgt_seq, tgt_pos, src_seq, enc_output)
 
-        # right to left
+        dec_output_lr, *_ = self.decoder_lr(tgt_seq, tgt_pos, src_seq, enc_output)
         dec_output_rl, *_ = self.decoder_rl(tgt_seq_reversed, tgt_pos, src_seq, enc_output)
-        # print(dec_output_rl)
-        # sys.exit(1)
 
         seq_logit_lr = self.tgt_word_prj_lr(dec_output_lr)
         seq_logit_rl = self.tgt_word_prj_rl(dec_output_rl)
@@ -279,6 +313,31 @@ class Translator(OriginalTranslator):
 
             active_src_seq = collect_active_part(src_seq, active_inst_idx, n_prev_active_inst, n_bm)
             active_src_enc = collect_active_part(src_enc, active_inst_idx, n_prev_active_inst, n_bm)
+            # print(active_src_enc.shape)
+            if hasattr(self.model.encoder, 'ntm'):
+                self.model.encoder.ntm.previous_state = list(self.model.encoder.ntm.previous_state)
+                self.model.encoder.ntm.previous_state[1] = list(self.model.encoder.ntm.previous_state[1])
+                memory = self.model.encoder.ntm.memory
+                self.model.encoder.ntm.memory.memory = collect_active_part(memory.memory.view(n_prev_active_inst*n_bm, -1),
+                                                                           active_inst_idx, n_prev_active_inst, n_bm).view(-1, memory.N, memory.M)
+                self.model.encoder.ntm.memory.batch_size = self.model.encoder.ntm.memory.memory.shape[0]
+                # print(self.model.encoder.ntm.memory.memory.shape, self.model.encoder.ntm.memory.batch_size)
+                for i in range(len(self.model.encoder.ntm.previous_state)):
+                    for j, tensor  in enumerate(self.model.encoder.ntm.previous_state[i]):
+                        # print(i, j, tensor.shape)
+                        squeezed = False
+                        if len(tensor.shape) == 3:
+                            dim0, dim1, dim2 = tensor.shape  # dim1 = n_prev_active_inst*n_bm
+                            tensor = torch.transpose(tensor, 0, 1).contiguous().view(dim1, -1)
+                            # tensor = tensor.squeeze(0)
+                            squeezed = True
+                        new_tensor = collect_active_part(tensor, active_inst_idx, n_prev_active_inst, n_bm)
+                        if squeezed:
+                            new_tensor = torch.transpose(new_tensor.contiguous().view(-1, dim0, dim2), 0, 1).contiguous()
+
+                        # print(new_tensor.shape)
+                        self.model.encoder.ntm.previous_state[i][j] = new_tensor
+
             # active_src_enc.register_hook(print_grad('active src enc'))
             active_src_enc[torch.isnan(active_src_enc)] = 0
             active_inst_idx_to_position_map = get_inst_idx_to_tensor_position_map(active_inst_idx_list)
@@ -372,15 +431,22 @@ class Translator(OriginalTranslator):
             src_seq = copy.copy(raw_src_seq)
             src_pos = copy.copy(raw_src_pos)
 
-            #-- Encode
+            # -- Encode
             src_seq, src_pos = src_seq.to(self.device), src_pos.to(self.device)
+            if hasattr(self.model.encoder, 'ntm'):
+                n_inst, len_s = src_seq.size()
+                src_seq = src_seq.repeat(1, n_bm).view(n_inst * n_bm, len_s)
             src_enc, *_ = self.model.encoder(src_seq, src_pos)
+            # print(self.model.encoder.ntm.memory.N, self.model.encoder.ntm.memory.memory.shape)
+            # print(type(self.model.encoder.ntm.previous_state[0]))
+            # print(type(self.model.encoder.ntm.previous_state[1]))
+            # print(type(self.model.encoder.ntm.previous_state[2]))
 
             #-- Repeat data for beam search
-            n_inst, len_s, d_h = src_enc.size()
-            src_seq = src_seq.repeat(1, n_bm).view(n_inst * n_bm, len_s)
-            # src_enc = src_enc.repeat(1, n_bm, 1).view(n_inst * n_bm, len_s, d_h)
-            src_enc = src_enc.unsqueeze(1).expand(-1, n_bm, -1, -1).contiguous().view(n_inst * n_bm, len_s, d_h)
+            if len(src_enc.size()) == 3:
+                n_inst, len_s, d_h = src_enc.size()
+                src_seq = src_seq.repeat(1, n_bm).view(n_inst * n_bm, len_s)
+                src_enc = src_enc.unsqueeze(1).expand(-1, n_bm, -1, -1).contiguous().view(n_inst * n_bm, len_s, d_h)
 
             # src_enc.register_hook(print_grad('{}, src_enc'.format(src_enc.size())))
 

@@ -9,6 +9,7 @@ import json
 import config
 from dataset import TranslationDataset
 from src.model import Translator
+from src.ntm_model import NTMTranslator
 from transformer.Constants import UNK_WORD
 
 def main():
@@ -28,9 +29,10 @@ def main():
                         help='data file for vocabulary. if not specified (default), use the one in -data')
     parser.add_argument('-split', type=float, default=0.8,
                         help='proprotion of training data. the rest is test data.')
+    parser.add_argument('-offset', type=float, default=0,
+                        help="determin starting index of training set, for cross validation")
     parser.add_argument('-output', default='pred.json',
-                        help="""Path to output the predictions (each line will
-                        be the decoded sequence""")
+                        help="""Path to output the predictions (each line will be the decoded sequence""")
     parser.add_argument('-beam_size', type=int, default=10,
                         help='Beam size')
     parser.add_argument('-batch_size', type=int, default=32,
@@ -54,22 +56,37 @@ def main():
             formmated_map[d['id']] = d
 
 
-    train_len = int(preprocess_data['settings']['n_instances'] * opt.split)
+    N = preprocess_data['settings']['n_instances']
+    train_len = int(N * opt.split)
+    start_idx = int(opt.offset * N)  # start location of training data
+    print("Data split: {}".format(opt.split))
+    print("Training starts at: {} out of {} instances".format(start_idx, N))
+
+    if start_idx + train_len < N:
+        valid_src_insts = preprocess_data['src'][start_idx + train_len:] + preprocess_data['src'][:start_idx]
+        valid_tgt_insts = preprocess_data['tgt'][start_idx + train_len:] + preprocess_data['tgt'][:start_idx]
+    else:
+        valid_len = N - train_len
+        valid_start_idx = start_idx - valid_len
+
+        valid_src_insts = preprocess_data['src'][valid_start_idx: start_idx]
+        valid_tgt_insts = preprocess_data['tgt'][valid_start_idx: start_idx]
 
     test_loader = torch.utils.data.DataLoader(
         TranslationDataset(
             src_word2idx=preprocess_data['dict']['src'],
             tgt_word2idx=preprocess_data['dict']['tgt'],
-            src_insts=preprocess_data['src'][train_len:]),
+            src_insts=valid_src_insts),
         num_workers=2,
         batch_size=opt.batch_size)
         # collate_fn=collate_fn)
     test_loader.collate_fn = test_loader.dataset.collate_fn
 
-    tgt_insts = preprocess_data['tgt'][train_len:]
+    tgt_insts = valid_tgt_insts
     block_list = [preprocess_data['dict']['tgt'][UNK_WORD]]
 
     translator = Translator(opt)
+    # translator = NTMTranslator(opt)
     translator.model.eval()
 
     output = []
@@ -85,7 +102,7 @@ def main():
 
             for j, idx_seq in enumerate(idx_seqs):  # loop over n_best results
                 d = {}
-                question_id = preprocess_data['idx2id'][n+train_len]
+                question_id = preprocess_data['idx2id'][(n + train_len + start_idx) % N]
 
                 pred_line = ''.join([test_loader.dataset.tgt_idx2word[idx] for idx in idx_seq])
                 score = scores[j]
@@ -100,18 +117,18 @@ def main():
                 src_text = ' '.join([test_loader.dataset.src_idx2word[idx] for idx in src_idx_seq])
                 tgt_text = ''.join([test_loader.dataset.tgt_idx2word[idx] for idx in tgt_insts[n]])
                 if opt.reset_num:
-                    src_text = reset_numbers(src_text, preprocess_data['numbers'][n + train_len])
+                    src_text = reset_numbers(src_text, preprocess_data['numbers'][(n + train_len + start_idx) % N])
                     # tgt_text = reset_numbers(tgt_text, preprocess_data['numbers'][n + train_len])
                     tgt_text = ';'.join(formmated_map[question_id]['equations'])
 
-                    pred_line = reset_numbers(pred_line, preprocess_data['numbers'][n + train_len])
+                    pred_line = reset_numbers(pred_line, preprocess_data['numbers'][(n + train_len + start_idx) % N], try_similar=True)
                     if translator.opt.bi:
-                        pred_line_reverse = reset_numbers(pred_line_reverse, preprocess_data['numbers'][n + train_len])
+                        pred_line_reverse = reset_numbers(pred_line_reverse, preprocess_data['numbers'][(n + train_len + start_idx) % N], try_similar=True)
                         # print(pred_line, tgt_text)
                         # print(pred_line_reverse, tgt_text, '\n')
 
                 d['question'] = src_text
-                d['ans'] = preprocess_data['ans'][n + train_len]
+                d['ans'] = preprocess_data['ans'][(n + train_len + start_idx) % N]
                 d['id'] = question_id
                 d['equation'] = tgt_text
                 d['pred'] = (pred_line.replace('</s>', ''), round(score.item(), 3) )
@@ -126,11 +143,20 @@ def main():
     print('[Info] Finished.')
 
 
-def reset_numbers(text, number_dict):
+def reset_numbers(text, number_dict, try_similar=False):
     for k, v in number_dict.items():
-        text = text.replace(k, v)
-    return text
+        if not try_similar:
+            text = text.replace(k, v)
+        else:
+            N_k = 'N' + k[1:]
+            M_k = 'M' + k[1:]
+            F_k = 'F' + k[1:]
+            text = text.replace(N_k, v)
+            text = text.replace(M_k, v)
+            text = text.replace(F_k, v)
 
+    text = text.replace('--', '+')
+    return text
 
 if __name__ == "__main__":
     main()

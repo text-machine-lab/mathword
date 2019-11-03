@@ -17,11 +17,13 @@ from scripts.preprocess import reformat_equation
 
 OPS = re.compile(r'([\+\-\*/\^\(\)=<>!;])', re.UNICODE)  # operators
 DIGITS = re.compile(r'\d*\.?\d+')
+SIGNED_DIGITS = re.compile(r'\-?\d*\.?\d+')
 WORDDIGITS = 'zero|one|two|three|four|five|six|seven|eight|nine'
 WORDNUM = 'one|two|three|four|five|six|seven|eight|nine|ten| \
             eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen| \
             eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety'
-COMMON_CONSTANTS = set(['0.5', '1', '2', '12', '24', '10', '100', '1000', '60', '180', '360', '3.14', '3.1416'])
+COMMON_CONSTANTS = set(['0.1', '0.05', '0.25', '0.5', '1', '2', '7', '12', '13', '24', '10', '90', '100', '1000',
+                        '60', '180', '360', '3600', '3.14', '3.1416', '231', '1.609', '52', '5280', '1760', '0.453', '231'])
 MATH_TOKENS = ['+', '-', '*', '/', '=', '(', ')', ';', '^', 'sqrt', 'sin', 'cos', 'tan', 'cot', 'exp']
 UNITS = ['m', 'cm', 'mm', 'ft', 'inch', 'mph', 'g', 'kg', 'mg', 'lb', 'lbs', 'oz', 'mi', 'rad', '\u00b0']
 N_SYMBOLS = 10
@@ -36,9 +38,27 @@ def equation_tokenize(expr, numbers):
     idx2key = {}
     unmached_digits = []
     unused = set(numbers.keys())
+    additional_numbers = {}
+    absolute_values = {}  # for negative numbers only
+    for k, v in numbers.items():  # simple operations on numbers, to see if there is any match
+        try:
+            v = round(eval(v), 3)
+        except:
+            continue
+
+        if v < 0:
+            absolute_values[-v] = k
+        else:
+            additional_numbers[v + 1] = k+'+1'
+            additional_numbers[v - 1] = k+'-1'
+            additional_numbers[v * 10] = k + '*10'
+            additional_numbers[v / 10] = k + '/10'
+            additional_numbers[v * 100] = k+'*100'
+            additional_numbers[v / 100] = k+'/100'
+            additional_numbers[v * 60] = k+'*60'
 
     expr_copy = expr
-    for match in re.finditer(DIGITS, expr_copy):
+    for match in re.finditer(DIGITS, expr_copy):  # replace numbers with approximate values
         try:
             expr = expr.replace(match.group(), str(round(eval(match.group()), 3)), 1)
         except SyntaxError:
@@ -47,31 +67,80 @@ def equation_tokenize(expr, numbers):
 
     while True:
         match = re.search(DIGITS, expr)
+        # print(text_digits, match)
         if not match:
             break
         replaced = False
         start, end = match.span()
-        for v, k in text_digits:
+        v_equ = eval(match.group())
+
+        for v_text, k in absolute_values.items():  # try matching negative numbers from absolute value
+            if v_equ == v_text and expr[start-1] == '+':
+                if k in unused:
+                    unused.remove(k)
+                k_idx = k[:2] + chr(int(k[2:]) + ord('a'))  # so number index in N_1 won't be replaced as digits
+                idx2key[k_idx] = k
+                expr = expr[:start-1] + '-(' + k_idx + ')' + expr[end:]
+                replaced = True
+                v = numbers[k]
+                break  # replace one number each time
+            elif v_equ == v_text and expr[start-1] == '-':
+                if k in unused:
+                    unused.remove(k)
+                k_idx = k[:2] + chr(int(k[2:]) + ord('a'))  # so number index in N_1 won't be replaced as digits
+                idx2key[k_idx] = k
+                expr = expr[:start-1] + k_idx + expr[end:]
+                replaced = True
+                v = numbers[k]
+                break  # replace one number each time
+
+        if replaced:
+            del absolute_values[v_text]
+            # put it on the end of the list, so it has low priority to be used next time
+            text_digits.remove((v, k))
+            text_digits.append((v, k))
+            continue
+
+        for v, k in text_digits:  # try matching numbers
             try:
-                v_equ, v_text = eval(match.group()), round(eval(v), 3)
+                v_text = round(eval(v), 3)
             except:  # not valid numbers
                 continue
             if v_equ == v_text:
                 if k in unused:
                     unused.remove(k)
-                k_idx = 'N_' + chr(int(k[2:]) + ord('a'))  # so number index in N_1 won't be replaced as digits
+                k_idx = k[:2] + chr(int(k[2:]) + ord('a'))  # so number index in N_1 won't be replaced as digits
                 idx2key[k_idx] = k
                 expr = expr[:start] + k_idx + expr[end:]
                 replaced = True
-                break  # replace one number only
+                break  # replace one number each time
+
+        if replaced:
+            # put it on the end of the list, so it has low priority to be used next time
+            text_digits.remove((v, k))
+            text_digits.append((v, k))
+
+        if not replaced:
+            for v_text, key in additional_numbers.items():  # try matching additional numbers
+                # try:
+                #     v_equ = eval(match.group())
+                # except:  # not valid numbers
+                #     continue
+                if v_equ == v_text:
+                    k, suffix = key[:3], key[3:]
+                    if k in unused:
+                        unused.remove(k)
+                    k_idx = k[:2] + chr(int(k[2:]) + ord('a'))  # so number index in N_1 won't be replaced as digits
+                    idx2key[k_idx] = k
+                    expr = expr[:start] + '(' + k_idx + '#' + ')' + expr[end:]
+                    unmached_digits.append(suffix)
+                    replaced = True
+                    break  # replace one number each time
 
         if not replaced:
             expr = expr[:start] + '#' + expr[end:]
             unmached_digits.append(match.group())
-        else:
-            # put it on the end of the list, so it has low priority to be used
-            text_digits.remove((v, k))
-            text_digits.append((v, k))
+
 
     for k_idx, k in idx2key.items():
         expr = expr.replace(k_idx, k)
@@ -170,17 +239,19 @@ def word2digits(s):
 
     s = re.sub(r'(\d+\.?\d*)\scents', r'$\1%', s, flags=re.IGNORECASE)
 
-    while True:
-        match = re.search(r'(\s|^)((%s)+(\-(%s))?)([^\w]|$)' %(WORDNUM, WORDDIGITS), s, re.IGNORECASE)
+    matches = re.finditer(r'(\s|^)((%s)+(\-(%s))?)([^\w]|$)' %(WORDNUM, WORDDIGITS), s, re.IGNORECASE)
+    offset = 0
+    for match in matches:
         # print( match.group(2), match.group(6))
         if match and match.group(2) not in ('one', 'One'):
+            # print(match.group(2)+'_')
             digits = word_to_num(match.group(2))
             start, end = match.span()
-            if start != 0:
-                start += 1
-            s = s[:start] + str(digits) + s[end-1:]
-        else:
-            break
+            # if start != 0:
+            #     start += 1
+            s = s[:start+offset] + ' ' + str(digits) + ' ' + s[end+offset:]
+            offset += len(str(digits)) + 2 - end + start
+
     match = re.search(r'(\d+)\shundred', s)
     if match:
         val = eval(match.group(1)) * 100
@@ -259,11 +330,12 @@ def text_tokenize(question, equations):
     tokens = []
     numbers = OrderedDict()
     for word in words:
-        if word[0] == '-' and len(word) > 1:
-            tokens.append('-')
-            word = word[1:]
-        pattern0 = re.match(r'([a-zA-Z]+)(\d*\.?\d+)$', word)
-        pattern1 = re.match(r'(\d*\.?\d+)\-?([a-zA-Z]+)$', word)
+        # if word[0] == '-' and len(word) > 1: # split minus sign and digits
+        #     tokens.append('-')
+        #     word = word[1:]
+
+        pattern0 = re.match(r'([a-zA-Z]+)(\d*\.?\d+)$', word)  # letters followed by digits
+        pattern1 = re.match(r'(\d*\.?\d+)\-?([a-zA-Z]+)$', word)  # range with '-'
         if pattern0:
             tokens.append(pattern0.group(1))
             number = 'N_' + str(len(numbers))
@@ -275,10 +347,10 @@ def text_tokenize(question, equations):
             numbers[number] = pattern1.group(1)
             tokens.append(number)
             tokens.append(pattern1.group(2))
-        elif re.search(DIGITS, word.replace(',', '')):
+        elif re.search(SIGNED_DIGITS, word.replace(',', '')):
             prev_end = 0
             word = word.replace(',', '')
-            for item in re.finditer(DIGITS, word):
+            for item in re.finditer(SIGNED_DIGITS, word):  # do this for cases like '12+34', which would be a single token
                 match = item.group()
                 if match[0] == '0' and len(match) > 1 and '.' not in match:  # patterns like '025' not considered digits
                     tokens.append(match)
@@ -286,8 +358,16 @@ def text_tokenize(question, equations):
                     continue
                 start, end = item.span()
                 tokens += list(word[prev_end:start])
-                number = 'N_' + str(len(numbers))
-                numbers[number] = item.group()
+
+                if match[0] == '-':
+                    prefix = 'M_'
+                elif eval(match) < 1:
+                    prefix = 'F_'
+                else:
+                    prefix = 'N_'
+                number = prefix + str(len(numbers))
+
+                numbers[number] = match
                 tokens.append(number)
                 prev_end = end
             if prev_end != len(word):
@@ -295,6 +375,7 @@ def text_tokenize(question, equations):
                 tokens += list(word[prev_end:])
         else:
             tokens.append(word)
+
     return tokens, numbers, equations
 
 
@@ -307,7 +388,7 @@ def get_embedding_matrix(word_vectors=None):
     EOS_WORD = '</s>'
     """
     n_special_toks = 4
-    n_number_symbols = N_SYMBOLS
+    n_number_symbols = N_SYMBOLS * 3  # non-negative integers, negatives, floats
     word_indexes = {}
     embedding_matrix = np.random.uniform(low=-0.5, high=0.5,
                                          size=(len(word_vectors) + n_special_toks + n_number_symbols,
@@ -323,10 +404,23 @@ def get_embedding_matrix(word_vectors=None):
     word_indexes[BOS_WORD] = 2
     word_indexes[EOS_WORD] = 3
 
-    for i in range(n_number_symbols):
-        # embedding_matrix[len(word_indexes)] = np.zeros(config.EMBEDDING_DIM)
-        # embedding_matrix[len(word_indexes)][100] = 1   # set special values for N_x... they are all the same
+    for i in range(N_SYMBOLS):
         word_indexes['N_' + str(i)] = len(word_indexes)
+        if i > 0:
+            embedding_matrix[word_indexes['N_' + str(i)]] = embedding_matrix[word_indexes['N_0']]   # set special values for N_x... they are all the same
+
+    for i in range(N_SYMBOLS):
+        word_indexes['M_' + str(i)] = len(word_indexes)
+        if i > 1:
+            embedding_matrix[word_indexes['M_' + str(i)]] = embedding_matrix[word_indexes['M_0']]
+        else:
+            embedding_matrix[word_indexes['M_0']] += embedding_matrix[word_indexes['N_0']]  # let N_0, M_0, F_0 be similar to some extent, but not equal
+    for i in range(N_SYMBOLS):
+        word_indexes['F_' + str(i)] = len(word_indexes)
+        if i > 1:
+            embedding_matrix[word_indexes['F_' + str(i)]] = embedding_matrix[word_indexes['F_0']]
+        else:
+            embedding_matrix[word_indexes['F_0']] += embedding_matrix[word_indexes['N_0']]
 
     embedding_matrix[0] = embedding_matrix[1] = embedding_matrix[2] = embedding_matrix[3] = np.zeros(config.EMBEDDING_DIM)
     embedding_matrix[1][1] = 1  # use one-hot for these special characters
@@ -370,6 +464,7 @@ def load_data(data_files, pretrained=True, max_len=200):
     for f in data_files:
         data += json.load(open(f))
     shuffle(data)
+    shuffle(data)  # do it twice
 
     src = []
     tgt = []
@@ -386,8 +481,11 @@ def load_data(data_files, pretrained=True, max_len=200):
             src_truncated += 1
             text_toks = text_toks[:max_len]
 
-        equation_toks, unused = equation_tokenize(equations, number_dict)
-
+        try:
+            equation_toks, unused = equation_tokenize(equations, number_dict)
+        except ValueError:
+            print(d['text'])
+            raise ValueError
         if len(equation_toks) > max_len:
             # print(equation_toks)
             tgt_truncated += 1
@@ -396,7 +494,7 @@ def load_data(data_files, pretrained=True, max_len=200):
 
         for unused_number in unused:
             for x, tok in enumerate(text_toks):
-                if tok == unused_number and tok in COMMON_CONSTANTS:
+                if tok == unused_number and number_dict[unused_number] in COMMON_CONSTANTS:
                     text_toks[x] = number_dict[tok]
 
         src.append(text_toks)
@@ -409,8 +507,11 @@ def load_data(data_files, pretrained=True, max_len=200):
     print("src truncated {}, tgt truncated {}".format(src_truncated, tgt_truncated))
     if pretrained:
         # src_vocab = build_vocab(itertools.chain(*src), config.WORD_VECTORS, K=50000)
-        src_vocab = get_vocab(itertools.chain(*src), config.WORD_VECTORS, cutoff=8)
-        special_symbols = ['N_' + str(i) for i in range(N_SYMBOLS)] + [PAD_WORD, UNK_WORD, BOS_WORD, EOS_WORD]
+        src_vocab = get_vocab(itertools.chain(*src), config.WORD_VECTORS, cutoff=0)
+        special_symbols = ['N_' + str(i) for i in range(N_SYMBOLS)] + \
+                          ['M_' + str(i) for i in range(N_SYMBOLS)] + \
+                          ['F_' + str(i) for i in range(N_SYMBOLS)] + \
+                          [PAD_WORD, UNK_WORD, BOS_WORD, EOS_WORD]
         for symbol in special_symbols:
             if symbol in src_vocab:
                 del src_vocab[symbol]
@@ -420,7 +521,10 @@ def load_data(data_files, pretrained=True, max_len=200):
         src_indexes = get_token_indexes(itertools.chain(*src))
 
     # tgt_indexes = get_token_indexes(itertools.chain(*tgt))
-    tgt_tokens = ['N_'+str(x) for x in range(N_SYMBOLS)] + [str(x) for x in range(10)] + list(COMMON_CONSTANTS) \
+    tgt_tokens = ['N_' + str(x) for x in range(N_SYMBOLS)] + \
+                 ['M_' + str(x) for x in range(N_SYMBOLS)] + \
+                 ['F_' + str(x) for x in range(N_SYMBOLS)] + \
+                 [str(x) for x in range(10)] + list(COMMON_CONSTANTS) \
                  + MATH_TOKENS + [chr(x+ord('a')) for x in range(26)]
     tgt_indexes = get_token_indexes(tgt_tokens)
 
@@ -504,8 +608,10 @@ if __name__ == '__main__':
     #                   '/data2/ymeng/dolphin18k/formatted/eval_linear_manual_t6.json'],
     #                  pretrained=pretrained, max_len=args.max_len)
 
-    data = load_data(['/data2/ymeng/dolphin18k/eval_dataset/eval_dataset_formatted.json'],
+    data = load_data(['/data2/ymeng/dolphin18k/eval_dataset/eval_dataset_shuffled.json'],
                      pretrained=pretrained, max_len=args.max_len)
+    # data = load_data(['/data2/ymeng/dolphin18k/eval_dataset/eval_dataset_formatted.json'],
+    #                  pretrained=pretrained, max_len=args.max_len)
     path = os.path.join(args.dest, 'data.pt')
     torch.save(data, path)
 
