@@ -229,6 +229,9 @@ def process_frac(s, equations):
 def word2digits(s):
 
     s = re.sub(r'twice', '2 times', s, flags=re.IGNORECASE)
+    s = re.sub(r'double', '2 times', s, flags=re.IGNORECASE)
+    s = re.sub(r'triple', '3 times', s, flags=re.IGNORECASE)
+    s = re.sub(r'quadruple', '4 times', s, flags=re.IGNORECASE)
     s = re.sub(r' quarter', ' quarter (1/4 = 0.25)', s, flags=re.IGNORECASE)
     s = re.sub(r' half ', ' half (1/2 = 0.5) ', s, flags=re.IGNORECASE)
     s = re.sub(r'one[\s\-]*third', '1/3', s, flags=re.IGNORECASE)
@@ -281,6 +284,8 @@ def add_knowledge(s):
         s += ' 1 day = 24 hours.'
     if re.search(r'year|annual', text) and 'month' in text:
         s += ' 1 year = 12 months.'
+    if 'day' in text and 'week' in text:
+        s += ' 1 week = 7 days.'
     if 'day' in text and 'month' in text:
         s += ' 1 month = 30 or 31 or 28 or 29 days.'
     if (re.search(r'feet|foot|ft', text) and re.search(r'inch|in\.', text)) or re.search(r'\d+\'\d+\"', text):
@@ -608,8 +613,11 @@ if __name__ == '__main__':
     #                   '/data2/ymeng/dolphin18k/formatted/eval_linear_manual_t6.json'],
     #                  pretrained=pretrained, max_len=args.max_len)
 
-    data = load_data(['/data2/ymeng/dolphin18k/eval_dataset/eval_dataset_shuffled.json'],
-                     pretrained=pretrained, max_len=args.max_len)
+    #data = load_data(['/data2/ymeng/dolphin18k/eval_dataset/eval_dataset_shuffled.json'],
+    #                 pretrained=pretrained, max_len=args.max_len)
+
+    data = load_data(['/home/mattd/eval_dataset_corrected/eval_dataset_shuffled.json'],
+        pretrained=pretrained, max_len=args.max_len)
     # data = load_data(['/data2/ymeng/dolphin18k/eval_dataset/eval_dataset_formatted.json'],
     #                  pretrained=pretrained, max_len=args.max_len)
     path = os.path.join(args.dest, 'data.pt')

@@ -81,8 +81,8 @@ class Decoder(OriginalDecoder):
         # -- Prepare masks
         non_pad_mask = get_non_pad_mask(tgt_seq)
 
-        slf_attn_mask_subseq = get_subsequent_mask(tgt_seq)
-        slf_attn_mask_keypad = get_attn_key_pad_mask(seq_k=tgt_seq, seq_q=tgt_seq)
+        slf_attn_mask_subseq = get_subsequent_mask(tgt_seq).type(torch.cuda.LongTensor)
+        slf_attn_mask_keypad = get_attn_key_pad_mask(seq_k=tgt_seq, seq_q=tgt_seq).type(torch.cuda.LongTensor)
         slf_attn_mask = (slf_attn_mask_keypad + slf_attn_mask_subseq).gt(0)
 
         dec_enc_attn_mask = get_attn_key_pad_mask(seq_k=src_seq, seq_q=tgt_seq)
