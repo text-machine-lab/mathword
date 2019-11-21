@@ -120,7 +120,7 @@ def equation_tokenize(expr, numbers):
             text_digits.remove((v, k))
             text_digits.append((v, k))
 
-        if not replaced:
+        if not replaced and v_equ > 2 and v_equ < -2:
             for v_text, key in additional_numbers.items():  # try matching additional numbers
                 # try:
                 #     v_equ = eval(match.group())
@@ -137,6 +137,7 @@ def equation_tokenize(expr, numbers):
                     replaced = True
                     break  # replace one number each time
 
+        # adds a # token for the number, so it can move on to the next
         if not replaced:
             expr = expr[:start] + '#' + expr[end:]
             unmached_digits.append(match.group())
@@ -145,12 +146,15 @@ def equation_tokenize(expr, numbers):
     for k_idx, k in idx2key.items():
         expr = expr.replace(k_idx, k)
 
+    # here it just replaces the # with the numbers it took out
     for item in unmached_digits:
         match = re.search(r'#', expr)
         start, end = match.span()
         expr = expr[:start] + item + expr[end:]
 
     expr = re.sub(OPS, r' \1 ', expr)
+
+
 
     return expr.split(), unused
 
