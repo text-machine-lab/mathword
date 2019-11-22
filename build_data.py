@@ -57,6 +57,27 @@ def equation_tokenize(expr, numbers):
             additional_numbers[v / 100] = k+'/100'
             additional_numbers[v * 60] = k+'*60'
 
+    # get operations between numbers
+    combined_numbers = dict()
+    keys = list(numbers.keys())
+    for i in range(len(keys)):
+        for j in range(i+1, len(keys)):
+            k_0 = keys[i]
+            k_1 = keys[j]
+            try:
+                v_0 = round(eval(numbers[k_0]), 3)
+                v_1 = round(eval(numbers[k_1]), 3)
+            except:
+                continue
+
+            if v_0 == 0 or v_1 == 0: continue
+            combined_numbers[v_0 + v_1] = "{} + {}".format(k_0, k_1)
+            combined_numbers[v_0 * v_1] = "{} * {}".format(k_0, k_1)
+            combined_numbers[v_0 - v_1] = "{} - {}".format(k_0, k_1)
+            combined_numbers[v_1 - v_0] = "{} - {}".format(k_1, k_0)
+            combined_numbers[v_0 / v_1] = "{} / {}".format(k_0, k_1)
+            combined_numbers[v_1 / v_0] = "{} / {}".format(k_1, k_0)
+
     expr_copy = expr
     for match in re.finditer(DIGITS, expr_copy):  # replace numbers with approximate values
         try:
@@ -120,6 +141,31 @@ def equation_tokenize(expr, numbers):
             text_digits.remove((v, k))
             text_digits.append((v, k))
 
+        # search for the combined numbers
+        if not replaced and v_equ > 2 and v_equ < -2:
+            for v_text, key in combined_numbers.items():  # try matching combined numbers
+                # try:
+                #     v_equ = eval(match.group())
+                # except:  # not valid numbers
+                #     continue
+                if abs(v_equ - v_text) < .001:
+                    k_0, suffix, k_1 = key.split()
+                    if k_0 in unused:
+                        unused.remove(k_0)
+                    if k_1 in unused:
+                        unused.remove(k_1)
+
+                    k_0_idx = k_0[:2] + chr(int(k_0[2:]) + ord('a'))  # so number index in N_1 won't be replaced as digits
+                    k_1_idx = k_1[:2] + chr(int(k_1[2:]) + ord('a'))
+                    idx2key[k_0_idx] = k_0
+                    idx2key[k_1_idx] = k_1
+                    expr = expr[:start] + '(' + k_0_idx + suffix + k_1_idx + ')' + expr[end:]
+                    replaced = True
+                    break  # replace one number each time
+
+
+        # before this, maybe try different operations on the current numbers
+        # to see if they match
         if not replaced and v_equ > 2 and v_equ < -2:
             for v_text, key in additional_numbers.items():  # try matching additional numbers
                 # try:
@@ -132,7 +178,7 @@ def equation_tokenize(expr, numbers):
                         unused.remove(k)
                     k_idx = k[:2] + chr(int(k[2:]) + ord('a'))  # so number index in N_1 won't be replaced as digits
                     idx2key[k_idx] = k
-                    expr = expr[:start] + '(' + k_idx + '#' + ')' + expr[end:]
+                    expr = expr[:start] + '(' + k_idx + '#' + ')' + expr[end:] # adds # to be replaced at end
                     unmached_digits.append(suffix)
                     replaced = True
                     break  # replace one number each time
@@ -379,6 +425,12 @@ def text_tokenize(question, equations):
                 numbers[number] = match
                 tokens.append(number)
                 prev_end = end
+
+                # add fraction number if there is one
+                #if len(tokens) > 2 and tokens[-2] == '/':
+                #    number = tokens[-3] + '/' + tokens[-1]
+                #    numbers[number] = str(float(numbers[tokens[-3]])/float(numbers[tokens[-1]]))
+
             if prev_end != len(word):
                 # print('last', prev_end, len(word))
                 tokens += list(word[prev_end:])
@@ -472,8 +524,8 @@ def load_data(data_files, pretrained=True, max_len=200):
     data = []
     for f in data_files:
         data += json.load(open(f))
-    shuffle(data)
-    shuffle(data)  # do it twice
+    #shuffle(data)
+    #shuffle(data)  # do it twice
 
     src = []
     tgt = []
@@ -484,6 +536,11 @@ def load_data(data_files, pretrained=True, max_len=200):
     src_truncated = 0
     tgt_truncated = 0
     for i, d in enumerate(data):
+        #if d['id'] == "yahoo.answers.20091118103856AAgrJmx":
+        if d['id'] == "'yahoo.answers.20070327090545AALcWuR'":
+        #if d['id'] == "yahoo.answers.20080128164811AAxelXC":
+        #if d['id'] == 'yahoo.answers.20090505142134AAY4jfJ':
+            print(d)
         equations = ';'.join([reformat_equation(s) for s in d['equations']])
         text_toks, number_dict, equations = text_tokenize(d['text'], equations)
         if len(text_toks) > max_len:
@@ -624,6 +681,9 @@ if __name__ == '__main__':
         pretrained=pretrained, max_len=args.max_len)
     # data = load_data(['/data2/ymeng/dolphin18k/eval_dataset/eval_dataset_formatted.json'],
     #                  pretrained=pretrained, max_len=args.max_len)
+
+    if not os.path.exists(args.dest):
+        os.mkdir(args.dest)
     path = os.path.join(args.dest, 'data.pt')
     torch.save(data, path)
 

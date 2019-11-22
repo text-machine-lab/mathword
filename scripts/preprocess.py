@@ -39,7 +39,7 @@ def reformat_equation(equation):
     # equation = equation.replace('\u00b0', '*pi/180')  # change degree to rad
 
     return var_on_left(equation.lower())
-
+    #return equation.lower()
 
 def var_on_left(equation):
     sides = equation.split("=")
