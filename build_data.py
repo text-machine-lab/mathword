@@ -674,11 +674,11 @@ if __name__ == '__main__':
     #                   '/data2/ymeng/dolphin18k/formatted/eval_linear_manual_t6.json'],
     #                  pretrained=pretrained, max_len=args.max_len)
 
-    #data = load_data(['/data2/ymeng/dolphin18k/eval_dataset/eval_dataset_shuffled.json'],
-    #                 pretrained=pretrained, max_len=args.max_len)
+    data = load_data(['/data2/ymeng/dolphin18k/eval_dataset/eval_dataset_shuffled.json'],
+                     pretrained=pretrained, max_len=args.max_len)
 
-    data = load_data(['/home/mattd/eval_dataset_corrected/eval_dataset_shuffled.json'],
-        pretrained=pretrained, max_len=args.max_len)
+    #data = load_data(['/home/mattd/eval_dataset_corrected/eval_dataset_shuffled.json'],
+    #    pretrained=pretrained, max_len=args.max_len)
     # data = load_data(['/data2/ymeng/dolphin18k/eval_dataset/eval_dataset_formatted.json'],
     #                  pretrained=pretrained, max_len=args.max_len)
 
