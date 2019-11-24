@@ -22,8 +22,8 @@ WORDDIGITS = 'zero|one|two|three|four|five|six|seven|eight|nine'
 WORDNUM = 'one|two|three|four|five|six|seven|eight|nine|ten| \
             eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen| \
             eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety'
-COMMON_CONSTANTS = set(['0.1', '0.05', '0.25', '0.5', '1', '2', '7', '12', '13', '24', '10', '90', '100', '1000',
-                        '60', '180', '360', '3600', '3.14', '3.1416', '231', '1.609', '52', '5280', '1760', '0.453', '231'])
+COMMON_CONSTANTS = set(['0.1', '0.05', '0.25', '0.5', '1', '2', '12', '24', '10', '100', '1000',
+                        '60', '180', '360', '3600', '3.14', '3.1416', '1.609', '52', '5280', '1760', '0.453'])
 MATH_TOKENS = ['+', '-', '*', '/', '=', '(', ')', ';', '^', 'sqrt', 'sin', 'cos', 'tan', 'cot', 'exp']
 UNITS = ['m', 'cm', 'mm', 'ft', 'inch', 'mph', 'g', 'kg', 'mg', 'lb', 'lbs', 'oz', 'mi', 'rad', '\u00b0']
 N_SYMBOLS = 10
@@ -56,6 +56,27 @@ def equation_tokenize(expr, numbers):
             additional_numbers[v * 100] = k+'*100'
             additional_numbers[v / 100] = k+'/100'
             additional_numbers[v * 60] = k+'*60'
+
+    # get operations between numbers
+    combined_numbers = dict()
+    keys = list(numbers.keys())
+    for i in range(len(keys)):
+        for j in range(i+1, len(keys)):
+            k_0 = keys[i]
+            k_1 = keys[j]
+            try:
+                v_0 = round(eval(numbers[k_0]), 3)
+                v_1 = round(eval(numbers[k_1]), 3)
+            except:
+                continue
+
+            if v_0 == 0 or v_1 == 0: continue
+            combined_numbers[v_0 + v_1] = "{} + {}".format(k_0, k_1)
+            combined_numbers[v_0 * v_1] = "{} * {}".format(k_0, k_1)
+            combined_numbers[v_0 - v_1] = "{} - {}".format(k_0, k_1)
+            combined_numbers[v_1 - v_0] = "{} - {}".format(k_1, k_0)
+            combined_numbers[v_0 / v_1] = "{} / {}".format(k_0, k_1)
+            combined_numbers[v_1 / v_0] = "{} / {}".format(k_1, k_0)
 
     expr_copy = expr
     for match in re.finditer(DIGITS, expr_copy):  # replace numbers with approximate values
@@ -120,7 +141,32 @@ def equation_tokenize(expr, numbers):
             text_digits.remove((v, k))
             text_digits.append((v, k))
 
-        if not replaced:
+        # search for the combined numbers -- not in use
+        if False and not replaced and v_equ not in COMMON_CONSTANTS:
+            for v_text, key in combined_numbers.items():  # try matching combined numbers
+                # try:
+                #     v_equ = eval(match.group())
+                # except:  # not valid numbers
+                #     continue
+                if abs(v_equ - v_text) < .001:
+                    k_0, suffix, k_1 = key.split()
+                    if k_0 in unused:
+                        unused.remove(k_0)
+                    if k_1 in unused:
+                        unused.remove(k_1)
+
+                    k_0_idx = k_0[:2] + chr(int(k_0[2:]) + ord('a'))  # so number index in N_1 won't be replaced as digits
+                    k_1_idx = k_1[:2] + chr(int(k_1[2:]) + ord('a'))
+                    idx2key[k_0_idx] = k_0
+                    idx2key[k_1_idx] = k_1
+                    expr = expr[:start] + '(' + k_0_idx + suffix + k_1_idx + ')' + expr[end:]
+                    replaced = True
+                    break  # replace one number each time
+
+
+        # before this, maybe try different operations on the current numbers
+        # to see if they match
+        if not replaced and v_equ:# not in COMMON_CONSTANTS:
             for v_text, key in additional_numbers.items():  # try matching additional numbers
                 # try:
                 #     v_equ = eval(match.group())
@@ -132,11 +178,12 @@ def equation_tokenize(expr, numbers):
                         unused.remove(k)
                     k_idx = k[:2] + chr(int(k[2:]) + ord('a'))  # so number index in N_1 won't be replaced as digits
                     idx2key[k_idx] = k
-                    expr = expr[:start] + '(' + k_idx + '#' + ')' + expr[end:]
+                    expr = expr[:start] + '(' + k_idx + '#' + ')' + expr[end:] # adds # to be replaced at end
                     unmached_digits.append(suffix)
                     replaced = True
                     break  # replace one number each time
 
+        # adds a # token for the number, so it can move on to the next
         if not replaced:
             expr = expr[:start] + '#' + expr[end:]
             unmached_digits.append(match.group())
@@ -145,12 +192,15 @@ def equation_tokenize(expr, numbers):
     for k_idx, k in idx2key.items():
         expr = expr.replace(k_idx, k)
 
+    # here it just replaces the # with the numbers it took out
     for item in unmached_digits:
         match = re.search(r'#', expr)
         start, end = match.span()
         expr = expr[:start] + item + expr[end:]
 
     expr = re.sub(OPS, r' \1 ', expr)
+
+
 
     return expr.split(), unused
 
@@ -229,6 +279,9 @@ def process_frac(s, equations):
 def word2digits(s):
 
     s = re.sub(r'twice', '2 times', s, flags=re.IGNORECASE)
+    s = re.sub(r'double', '2 times', s, flags=re.IGNORECASE)
+    s = re.sub(r'triple', '3 times', s, flags=re.IGNORECASE)
+    s = re.sub(r'quadruple', '4 times', s, flags=re.IGNORECASE)
     s = re.sub(r' quarter', ' quarter (1/4 = 0.25)', s, flags=re.IGNORECASE)
     s = re.sub(r' half ', ' half (1/2 = 0.5) ', s, flags=re.IGNORECASE)
     s = re.sub(r'one[\s\-]*third', '1/3', s, flags=re.IGNORECASE)
@@ -281,6 +334,8 @@ def add_knowledge(s):
         s += ' 1 day = 24 hours.'
     if re.search(r'year|annual', text) and 'month' in text:
         s += ' 1 year = 12 months.'
+    if 'day' in text and 'week' in text:
+        s += ' 1 week = 7 days.'
     if 'day' in text and 'month' in text:
         s += ' 1 month = 30 or 31 or 28 or 29 days.'
     if (re.search(r'feet|foot|ft', text) and re.search(r'inch|in\.', text)) or re.search(r'\d+\'\d+\"', text):
@@ -309,6 +364,14 @@ def add_knowledge(s):
         s += 'milli = 1/1000'
     if 'rad' in text and 'degree' in text:
         s += '1 radian = 180/3.14 degrees'
+    if 'quarter' in text:
+        s += '1 quarter = 0.25 dollars'
+    if 'dime' in text:
+        s += '1 quarter = 0.1 dollars'
+    if 'nickel' in text:
+        s += '1 quarter = 0.05 dollars'
+    if 'penny' or 'pennies' in text:
+        s += '1 quarter = 0.01 dollars'
 
     return s
 
@@ -370,6 +433,12 @@ def text_tokenize(question, equations):
                 numbers[number] = match
                 tokens.append(number)
                 prev_end = end
+
+                # add fraction number if there is one
+                #if len(tokens) > 2 and tokens[-2] == '/':
+                #    number = tokens[-3] + '/' + tokens[-1]
+                #    numbers[number] = str(float(numbers[tokens[-3]])/float(numbers[tokens[-1]]))
+
             if prev_end != len(word):
                 # print('last', prev_end, len(word))
                 tokens += list(word[prev_end:])
@@ -475,6 +544,11 @@ def load_data(data_files, pretrained=True, max_len=200):
     src_truncated = 0
     tgt_truncated = 0
     for i, d in enumerate(data):
+        #if d['id'] == "yahoo.answers.20091118103856AAgrJmx":
+        if d['id'] == "'yahoo.answers.20070327090545AALcWuR'":
+        #if d['id'] == "yahoo.answers.20080128164811AAxelXC":
+        #if d['id'] == 'yahoo.answers.20090505142134AAY4jfJ':
+            print(d)
         equations = ';'.join([reformat_equation(s) for s in d['equations']])
         text_toks, number_dict, equations = text_tokenize(d['text'], equations)
         if len(text_toks) > max_len:
@@ -608,10 +682,16 @@ if __name__ == '__main__':
     #                   '/data2/ymeng/dolphin18k/formatted/eval_linear_manual_t6.json'],
     #                  pretrained=pretrained, max_len=args.max_len)
 
-    data = load_data(['/data2/ymeng/dolphin18k/eval_dataset/eval_dataset_shuffled.json'],
-                     pretrained=pretrained, max_len=args.max_len)
+    #data = load_data(['/data2/ymeng/dolphin18k/eval_dataset/eval_dataset_shuffled.json'],
+    #                 pretrained=pretrained, max_len=args.max_len)
+
+    data = load_data(['/home/mattd/eval_dataset_corrected/eval_dataset_shuffled.json'],
+        pretrained=pretrained, max_len=args.max_len)
     # data = load_data(['/data2/ymeng/dolphin18k/eval_dataset/eval_dataset_formatted.json'],
     #                  pretrained=pretrained, max_len=args.max_len)
+
+    if not os.path.exists(args.dest):
+        os.mkdir(args.dest)
     path = os.path.join(args.dest, 'data.pt')
     torch.save(data, path)
 

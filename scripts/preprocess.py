@@ -1,6 +1,7 @@
 import json
 import sys
 import re
+import random
 import copy
 from collections import defaultdict
 
@@ -40,7 +41,18 @@ def reformat_equation(equation):
 
     equation = replace_variables(equation)
 
-    return equation.lower()
+    return var_on_left(equation.lower())
+
+
+def var_on_left(equation):
+    sides = equation.split("=")
+    if len(sides) == 1:
+        return equation
+    if re.search(r'[a-z]', sides[0]) and len(sides[0]) < len(sides[1]):
+        return equation
+    if re.search(r'[a-z]', sides[1]):
+        return '{}={}'.format(sides[1], sides[0])
+    return equation
 
 
 def replace_variables(equation):
@@ -68,7 +80,7 @@ if __name__ == '__main__':
     for item in data:
         d = {}
         d['ans'] = item['ans']
-        d['text'] = item['text']
+        d['text'] = item['text'].split('\"')[0]
         # d['text'] = item['original_text']
         d['id'] = item['id']
 
@@ -86,6 +98,8 @@ if __name__ == '__main__':
                 print("equation without new line", d['id'], part)
         d['equations'] = equs
         new_data.append(d)
+
+        random.shuffle(new_data)
 
     with open(destination, 'w') as f:
         json.dump(new_data, f, indent=2)
