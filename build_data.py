@@ -463,8 +463,8 @@ def load_data(data_files, pretrained=True, max_len=200):
     data = []
     for f in data_files:
         data += json.load(open(f))
-    shuffle(data)
-    shuffle(data)  # do it twice
+    # shuffle(data)
+    # shuffle(data)  # do it twice
 
     src = []
     tgt = []

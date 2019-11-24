@@ -10,6 +10,29 @@ import sys
 
 DECIMALS = 3
 
+def replace_perm(equation):
+    """p(n,m) --> factorial(n)/factorial(m)"""
+
+    match = re.search(r'[Pp]\((\d+),(\d+)\)', equation)
+    if match:
+        P_str = match.group()
+        n = match.group(1)
+        m = match.group(2)
+        return equation.replace(P_str, 'factorial({})/factorial({})'.format(n, m))
+    return equation
+
+
+def replace_comb(equation):
+    """c(n,m) --> factorial(n)/(factorial(m)*factorial(n-m))"""
+
+    match = re.search(r'[Cc]\((\d+),(\d+)\)', equation)
+    if match:
+        C_str = match.group()
+        n = match.group(1)
+        m = match.group(2)
+        return equation.replace(C_str, 'factorial({})/(factorial({})*factorial({}-{}))'.format(n, m, n, m))
+    return equation
+
 def solve_equations(equations):
     """
     :param equations: list of strings e.g. ['x + y = 48', 'x = 3*y']
@@ -100,6 +123,9 @@ def check_solution(answer, equations, decimals=DECIMALS, error=0.01):
     :param answer: string e.g. "5/3 or -3/5 | 1.667 or -0.6"
     :param equations: list of strings e.g. ["n - 1/n = 16/15"]
     :return: bool
+
+    note: items like sqrt(5) is in type sympy.core.power.Pow
+    and will be converted to float with float(sqrt(5))
     """
     try:
         solutions = solve_equations(equations)

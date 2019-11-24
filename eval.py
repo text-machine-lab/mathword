@@ -1,16 +1,26 @@
 import json
 import sys
+import os
 from tqdm import tqdm
+import argparse
 from src.check_answers import check_solution
 
 
 def main():
-    pred_file = sys.argv[1]
+    parser = argparse.ArgumentParser(description='predict.py')
+    parser.add_argument('result_file')
+    parser.add_argument('-wrong', default=None, help="output path with wrong anwers")
+
+    args = parser.parse_args()
+
+    pred_file = args.result_file
+
     with open(pred_file) as f:
         pred = json.load(f)
 
     n = len(pred)
     all_scores = 0
+    output = []
     for d in tqdm(pred, mininterval=2, leave=False):
         answer = d['ans']
         # equations = d['equation'].split(';')
@@ -23,10 +33,15 @@ def main():
         except:
             score = 0
         all_scores += round(score + 0.1)
-        # if score == 1:
-        #     print(equations, solution)
-        #     all_scores += score
+
+        if args.wrong and score == 0:
+            output.append(d)
+
     print("Solution accuracy: {:.3f}  -- {} out of {} correct.".format(all_scores / n, int(all_scores), n))
+    if args.wrong is not None:
+        with open(os.path.join(args.wrong, 'wrong_answers.json'), 'w') as f:
+            json.dump(output, f, indent=2)
+    print("saved wrong answers")
 
 if __name__ == '__main__':
     main()

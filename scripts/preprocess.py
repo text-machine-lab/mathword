@@ -18,11 +18,17 @@ def reformat_equation(equation):
     if 'is_' in equation or 'be_' in equation:  # univariate logic expression
         return equation
     equation = equation.replace(',', '')  # remove commas
-    # equation = equation.replace('%', '*.01')
+    equation = equation.replace('\u221a', 'sqrt')
+    equation = equation.replace('\u03c0', 'pi')
+    # equation = equation.replace('\u00b0', '*pi/180')  # change degree to rad
+
+    # change them to upper case just to avoid inserting '*'
     equation = equation.replace('sin', 'SIN')
     equation = equation.replace('cos', 'COS')
     equation = equation.replace('tan', 'TAN')
     equation = equation.replace('cot', 'COT')
+    equation = equation.replace('sqrt', 'SQRT')
+    equation = equation.replace('pi', 'PI')
 
     # add multiplication operator
     positions = []
@@ -33,9 +39,7 @@ def reformat_equation(equation):
         equation = equation[:pos+i] + '*' + equation[pos+i:]
 
     equation = replace_variables(equation)
-    equation = equation.replace('\u221a', 'sqrt')
-    equation = equation.replace('\u03c0', 'pi')
-    # equation = equation.replace('\u00b0', '*pi/180')  # change degree to rad
+
     return equation.lower()
 
 
