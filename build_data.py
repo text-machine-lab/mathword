@@ -166,7 +166,7 @@ def equation_tokenize(expr, numbers):
 
         # before this, maybe try different operations on the current numbers
         # to see if they match
-        if not replaced and v_equ not in COMMON_CONSTANTS:
+        if not replaced and v_equ:# not in COMMON_CONSTANTS:
             for v_text, key in additional_numbers.items():  # try matching additional numbers
                 # try:
                 #     v_equ = eval(match.group())
@@ -364,6 +364,14 @@ def add_knowledge(s):
         s += 'milli = 1/1000'
     if 'rad' in text and 'degree' in text:
         s += '1 radian = 180/3.14 degrees'
+    if 'quarter' in text:
+        s += '1 quarter = 0.25 dollars'
+    if 'dime' in text:
+        s += '1 quarter = 0.1 dollars'
+    if 'nickel' in text:
+        s += '1 quarter = 0.05 dollars'
+    if 'penny' or 'pennies' in text:
+        s += '1 quarter = 0.01 dollars'
 
     return s
 
@@ -674,11 +682,11 @@ if __name__ == '__main__':
     #                   '/data2/ymeng/dolphin18k/formatted/eval_linear_manual_t6.json'],
     #                  pretrained=pretrained, max_len=args.max_len)
 
-    data = load_data(['/data2/ymeng/dolphin18k/eval_dataset/eval_dataset_shuffled.json'],
-                     pretrained=pretrained, max_len=args.max_len)
+    #data = load_data(['/data2/ymeng/dolphin18k/eval_dataset/eval_dataset_shuffled.json'],
+    #                 pretrained=pretrained, max_len=args.max_len)
 
-    #data = load_data(['/home/mattd/eval_dataset_corrected/eval_dataset_shuffled.json'],
-    #    pretrained=pretrained, max_len=args.max_len)
+    data = load_data(['/home/mattd/eval_dataset_corrected/eval_dataset_shuffled.json'],
+        pretrained=pretrained, max_len=args.max_len)
     # data = load_data(['/data2/ymeng/dolphin18k/eval_dataset/eval_dataset_formatted.json'],
     #                  pretrained=pretrained, max_len=args.max_len)
 
