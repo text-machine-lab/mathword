@@ -367,11 +367,11 @@ def add_knowledge(s):
     if 'quarter' in text:
         s += '1 quarter = 0.25 dollars'
     if 'dime' in text:
-        s += '1 quarter = 0.1 dollars'
+        s += '1 dime = 0.1 dollars'
     if 'nickel' in text:
-        s += '1 quarter = 0.05 dollars'
-    if 'penny' or 'pennies' in text:
-        s += '1 quarter = 0.01 dollars'
+        s += '1 nickel = 0.05 dollars'
+    if 'penny' in text or 'pennies' in text:
+        s += '1 penny = 0.01 dollars'
 
     return s
 
