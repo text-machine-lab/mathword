@@ -315,6 +315,10 @@ def train_transformer(model, training_data, validation_data, optimizer, device, 
                 if valid_accu >= max(valid_accus):
                     torch.save(checkpoint, model_name)
                     print('    - [Info] The checkpoint file has been updated.')
+            elif opt.save_mode == 'interval':
+                if (epoch_i + 1) % 50 == 0:
+                    model_name = opt.save_model + '{}.chkpt'.format(epoch_i+1)
+                    torch.save(checkpoint, model_name)
             else:
                 model_name = opt.save_model + '.chkpt'
                 torch.save(checkpoint, model_name)
@@ -335,7 +339,7 @@ def main():
     parser.add_argument('-split', type=float, default=0.8, help="portion for training")
     parser.add_argument('-offset', type=float, default=0, help="determin starting index of training set, for cross validation")
 
-    parser.add_argument('-epoch', type=int, default=100)
+    parser.add_argument('-epoch', type=int, default=200)
     parser.add_argument('-batch_size', type=int, default=128)
     parser.add_argument('-bi', action='store_true')
 
@@ -357,7 +361,7 @@ def main():
 
     parser.add_argument('-log', default=None)
     parser.add_argument('-save_model', default=None)
-    parser.add_argument('-save_mode', type=str, choices=['all', 'best', 'last'], default='last')
+    parser.add_argument('-save_mode', type=str, choices=['all', 'best', 'interval', 'last'], default='last')
 
     parser.add_argument('-no_cuda', action='store_true')
     parser.add_argument('-label_smoothing', action='store_true')

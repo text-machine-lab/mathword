@@ -35,7 +35,7 @@ def main():
                         help="""Path to output the predictions (each line will be the decoded sequence""")
     parser.add_argument('-beam_size', type=int, default=10,
                         help='Beam size')
-    parser.add_argument('-batch_size', type=int, default=32,
+    parser.add_argument('-batch_size', type=int, default=64,
                         help='Batch size')
     parser.add_argument('-n_best', type=int, default=1,
                         help="""If verbose is set, will output the n_best

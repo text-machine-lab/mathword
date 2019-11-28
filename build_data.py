@@ -669,9 +669,10 @@ def check_data(data, idx):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument('--no-pretrained', action='store_true', default=False)
-    parser.add_argument('--max-len', type=int, default=70)
-    parser.add_argument('--dest', default='models/')
+    parser.add_argument('-no-pretrained', action='store_true', default=False)
+    parser.add_argument('-max-len', type=int, default=70)
+    parser.add_argument('-datafile', default='/data2/ymeng/dolphin18k/eval_dataset/eval_dataset_shuffledv2.json')
+    parser.add_argument('-dest', default='models/')
     args = parser.parse_args()
 
     pretrained = not args.no_pretrained
@@ -682,16 +683,10 @@ if __name__ == '__main__':
     #                   '/data2/ymeng/dolphin18k/formatted/eval_linear_manual_t6.json'],
     #                  pretrained=pretrained, max_len=args.max_len)
 
-    #data = load_data(['/data2/ymeng/dolphin18k/eval_dataset/eval_dataset_shuffled.json'],
-    #                 pretrained=pretrained, max_len=args.max_len)
-
-    data = load_data(['/home/mattd/eval_dataset_corrected/eval_dataset_shuffled.json'],
-        pretrained=pretrained, max_len=args.max_len)
+    data = load_data([args.datafile],
+                     pretrained=pretrained, max_len=args.max_len)
     # data = load_data(['/data2/ymeng/dolphin18k/eval_dataset/eval_dataset_formatted.json'],
     #                  pretrained=pretrained, max_len=args.max_len)
-
-    if not os.path.exists(args.dest):
-        os.mkdir(args.dest)
     path = os.path.join(args.dest, 'data.pt')
     torch.save(data, path)
 

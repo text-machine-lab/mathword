@@ -10,6 +10,7 @@ def main():
     parser = argparse.ArgumentParser(description='predict.py')
     parser.add_argument('result_file')
     parser.add_argument('-wrong', default=None, help="output path with wrong anwers")
+    parser.add_argument('-right', default=None, help="output path with right anwers")
 
     args = parser.parse_args()
 
@@ -20,7 +21,8 @@ def main():
 
     n = len(pred)
     all_scores = 0
-    output = []
+    wrong_output = []
+    right_output = []
     for d in tqdm(pred, mininterval=2, leave=False):
         answer = d['ans']
         # equations = d['equation'].split(';')
@@ -35,13 +37,20 @@ def main():
         all_scores += round(score + 0.1)
 
         if args.wrong and score == 0:
-            output.append(d)
+            wrong_output.append(d)
+        if args.right and score == 1:
+            d["chosen_equations"] = equations
+            right_output.append(d)
 
     print("Solution accuracy: {:.3f}  -- {} out of {} correct.".format(all_scores / n, int(all_scores), n))
     if args.wrong is not None:
         with open(os.path.join(args.wrong, 'wrong_answers.json'), 'w') as f:
-            json.dump(output, f, indent=2)
-    print("saved wrong answers")
+            json.dump(wrong_output, f, indent=2)
+        print("saved wrong answers")
+    if args.right is not None:
+        with open(os.path.join(args.right, 'right_answers.json'), 'w') as f:
+            json.dump(right_output, f, indent=2)
+        print("saved right answers")
 
 if __name__ == '__main__':
     main()

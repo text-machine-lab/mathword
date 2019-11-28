@@ -13,24 +13,30 @@ DECIMALS = 3
 def replace_perm(equation):
     """p(n,m) --> factorial(n)/factorial(m)"""
 
-    match = re.search(r'[Pp]\((\d+),(\d+)\)', equation)
-    if match:
-        P_str = match.group()
-        n = match.group(1)
-        m = match.group(2)
-        return equation.replace(P_str, 'factorial({})/factorial({})'.format(n, m))
+    matches = re.findall(r'([Pp]\(([\d\+\-]+),([\d]\+\-+)\))', equation)
+    if not matches:
+        return equation
+
+    for match in matches:
+        P_str = match[0]
+        n = match[1]
+        m = match[2]
+        equation = equation.replace(P_str, '(factorial({})/factorial({}))'.format(n, m))
     return equation
 
 
 def replace_comb(equation):
     """c(n,m) --> factorial(n)/(factorial(m)*factorial(n-m))"""
 
-    match = re.search(r'[Cc]\((\d+),(\d+)\)', equation)
-    if match:
-        C_str = match.group()
-        n = match.group(1)
-        m = match.group(2)
-        return equation.replace(C_str, 'factorial({})/(factorial({})*factorial({}-{}))'.format(n, m, n, m))
+    matches = re.findall(r'([Cc]\(([\d\+\-]+),([\d\+\-]+)\))', equation)
+    if not matches:
+        return equation
+
+    for match in matches:
+        C_str = match[0]
+        n = match[1]
+        m = match[2]
+        equation = equation.replace(C_str, '(factorial({})/(factorial({})*factorial({}-{})))'.format(n, m, n, m))
     return equation
 
 def solve_equations(equations):
@@ -50,6 +56,7 @@ def solve_equations(equations):
         if 'is_' in equation or 'be_' in equation: # constraints
             continue
         equation = equation.replace('e', 'E') # sympy uses E for natural log base
+        equation = replace_comb(replace_perm(equation))
 
         if equation.count('=') != 1:
             return []  # no solution

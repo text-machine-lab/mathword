@@ -29,6 +29,7 @@ def reformat_equation(equation):
     equation = equation.replace('tan', 'TAN')
     equation = equation.replace('cot', 'COT')
     equation = equation.replace('sqrt', 'SQRT')
+    equation = equation.replace('cbrt', 'CBRT')
     equation = equation.replace('pi', 'PI')
 
     # add multiplication operator
@@ -103,6 +104,5 @@ if __name__ == '__main__':
 
     with open(destination, 'w') as f:
         json.dump(new_data, f, indent=2)
-
 
 

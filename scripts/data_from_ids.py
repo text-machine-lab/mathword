@@ -4,7 +4,7 @@ import argparse
 import torch
 
 parser = argparse.ArgumentParser()
-parser.add_argument('-i','--id_file', help='id file', required=True)
+parser.add_argument('-i','--id_file', help='id file', default='/data2/ymeng/dolphin18k/eval_ids/eval_linear_t6.txt')
 parser.add_argument('-data', default='models/data.pt', help='data file')
 parser.add_argument('-dest', help='destination path', required=True)
 
