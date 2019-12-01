@@ -24,6 +24,7 @@ WORDNUM = 'one|two|three|four|five|six|seven|eight|nine|ten| \
             eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety'
 COMMON_CONSTANTS = set(['0.1', '0.05', '0.25', '0.5', '1', '2', '12', '24', '10', '100', '1000',
                         '60', '180', '360', '3600', '3.14', '3.1416', '1.609', '52', '5280', '1760', '0.453'])
+EXCLUDE_NUM = set([1, 0, -1, 2, -1, 10, 100, 3, -2)]
 MATH_TOKENS = ['+', '-', '*', '/', '=', '(', ')', ';', '^', 'sqrt', 'sin', 'cos', 'tan', 'cot', 'exp']
 UNITS = ['m', 'cm', 'mm', 'ft', 'inch', 'mph', 'g', 'kg', 'mg', 'lb', 'lbs', 'oz', 'mi', 'rad', '\u00b0']
 N_SYMBOLS = 10
@@ -142,7 +143,7 @@ def equation_tokenize(expr, numbers):
             text_digits.append((v, k))
 
         # search for the combined numbers -- not in use
-        if False and not replaced and v_equ not in COMMON_CONSTANTS:
+        if True and not replaced and v_equ not in EXCLUDE_NUM:
             for v_text, key in combined_numbers.items():  # try matching combined numbers
                 # try:
                 #     v_equ = eval(match.group())
@@ -166,7 +167,7 @@ def equation_tokenize(expr, numbers):
 
         # before this, maybe try different operations on the current numbers
         # to see if they match
-        if not replaced and v_equ:# not in COMMON_CONSTANTS:
+        if True and not replaced and v_equ not in EXCLUDE_NUM:
             for v_text, key in additional_numbers.items():  # try matching additional numbers
                 # try:
                 #     v_equ = eval(match.group())
