@@ -6,6 +6,8 @@ from transformer.Models import Decoder as OriginalDecoder
 from transformer.Models import get_sinusoid_encoding_table, EncoderLayer, get_non_pad_mask, get_attn_key_pad_mask, get_subsequent_mask
 from transformer.Beam import Beam
 from transformer.Translator import Translator as OriginalTranslator
+
+import transformers
 import torch.nn.functional as F
 import copy
 import sys
@@ -166,6 +168,60 @@ class Transformer(nn.Module):
         return seq_logit.view(-1, seq_logit.size(2))
 
 
+class BertTransformer(nn.Module):
+    ''' A sequence to sequence model with bert encoder. '''
+
+    def __init__(
+            self,
+            n_src_vocab, n_tgt_vocab, len_max_seq, d_inner=2048,
+            n_layers=6, n_head=8, d_k=64, d_v=64, dropout=0.1,
+            tgt_emb_prj_weight_sharing=True,
+            emb_src_tgt_weight_sharing=True):
+
+        super().__init__()
+
+        # d_word_vec and d_model are different, but will be transformed later
+        self.encoder = transformers.BertModel.from_pretrained('bert-base-cased')
+        self.encoder.resize_token_embeddings(n_src_vocab)
+        # use d_model as d_word_vec
+        self.d_model = self.encoder.config.hidden_size
+        self.decoder = Decoder(
+            n_tgt_vocab=n_tgt_vocab, len_max_seq=len_max_seq,
+            d_word_vec=self.d_model, d_model=self.d_model, d_inner=d_inner,
+            n_layers=n_layers, n_head=n_head, d_k=d_k, d_v=d_v,
+            dropout=dropout)
+
+        print("set tgt embedding, size {}".format(self.decoder.tgt_word_emb.weight.size()))
+        print("set positions decoder, size{}".format(self.decoder.position_enc.weight.size()))
+        self.tgt_word_prj = nn.Linear(self.d_model, n_tgt_vocab, bias=False)
+        nn.init.xavier_normal_(self.tgt_word_prj.weight)
+
+        self.aux_tgt_word_prj = nn.Linear(self.d_model, n_tgt_vocab, bias=False)
+        nn.init.xavier_normal_(self.aux_tgt_word_prj.weight)
+
+
+        if tgt_emb_prj_weight_sharing:
+            # Share the weight matrix between target word embedding & the final logit dense layer
+            self.tgt_word_prj.weight = self.decoder.tgt_word_emb.weight
+            self.x_logit_scale = (self.d_model ** -0.5)
+        else:
+            self.x_logit_scale = 1.
+
+        if emb_src_tgt_weight_sharing:
+            # Share the weight matrix between source & target word embeddings
+            assert n_src_vocab == n_tgt_vocab, \
+            "To share word embedding table, the vocabulary size of src/tgt shall be the same."
+            self.encoder.src_word_emb.weight = self.decoder.tgt_word_emb.weight
+
+    def forward(self, src_seq, src_pos, tgt_seq, tgt_pos):
+        tgt_seq, tgt_pos = tgt_seq[:, :-1], tgt_pos[:, :-1]
+
+        enc_output, *_ = self.encoder(src_seq, src_pos)
+        dec_output, *_ = self.decoder(tgt_seq, tgt_pos, src_seq, enc_output)
+
+        seq_logit = self.tgt_word_prj(dec_output) * self.x_logit_scale
+        return seq_logit.view(-1, seq_logit.size(2))
+
 def reverse_tensor(tensor, dim):
     reverse_idx = [i for i in range(tensor.size(dim)-1, -1, -1)]
     if torch.cuda.is_available():
@@ -184,7 +240,7 @@ class BiTransformer(nn.Module):
             n_layers=6, n_head=8, d_k=64, d_v=64, dropout=0.1,
             tgt_emb_prj_weight_sharing=False,
             emb_src_tgt_weight_sharing=False,
-            embedding_matrix=None):
+            embedding_matrix=None, bert=False):
 
         super().__init__()
 
@@ -193,8 +249,25 @@ class BiTransformer(nn.Module):
         del args['__class__']
         args['tgt_emb_prj_weight_sharing'] = False
         args['emb_src_tgt_weight_sharing'] = False
-
-        self.transformer = Transformer(**args)
+        if bert:
+            self.transformer = BertTransformer(
+                n_src_vocab, n_tgt_vocab, len_max_seq,
+                d_inner=d_inner,
+                n_layers=n_layers, n_head=n_head,
+                d_k=d_k, d_v=d_v, dropout=dropout,
+                tgt_emb_prj_weight_sharing=tgt_emb_prj_weight_sharing,
+                emb_src_tgt_weight_sharing=emb_src_tgt_weight_sharing,
+            )
+            d_model = self.transformer.d_model # because d model gets changed to match bert
+        else:
+            self.transformer = Transformer(
+                n_src_vocab, n_tgt_vocab, len_max_seq,
+                d_word_vec=d_word_vec, d_model=d_model, d_inner=d_inner,
+                n_layers=n_layers, n_head=n_head,
+                d_k=d_k, d_v=d_v, dropout=dropout,
+                tgt_emb_prj_weight_sharing=tgt_emb_prj_weight_sharing,
+                emb_src_tgt_weight_sharing=emb_src_tgt_weight_sharing,
+                embedding_matrix=embedding_matrix)
         self.encoder = self.transformer.encoder
         self.decoder_lr = self.transformer.decoder  # left to right, same as original transformer decoder
         self.decoder_rl = copy.deepcopy(self.decoder_lr)  # the same architecture
@@ -256,6 +329,21 @@ class Translator(OriginalTranslator):
                     d_inner=model_opt.d_inner_hid,
                     n_layers=model_opt.n_layers,
                     n_head=model_opt.n_head,
+                    dropout=model_opt.dropout,
+                    bert=model_opt.bert)
+
+            elif self.opt.bert:
+                model = BertTransformer(
+                    model_opt.src_vocab_size,
+                    model_opt.tgt_vocab_size,
+                    model_opt.max_token_seq_len,
+                    tgt_emb_prj_weight_sharing=model_opt.proj_share_weight,
+                    emb_src_tgt_weight_sharing=model_opt.embs_share_weight,
+                    d_k=model_opt.d_k,
+                    d_v=model_opt.d_v,
+                    d_inner=model_opt.d_inner_hid,
+                    n_layers=model_opt.n_layers,
+                    n_head=model_opt.n_head,
                     dropout=model_opt.dropout)
             else:
                 model = Transformer(
@@ -267,7 +355,7 @@ class Translator(OriginalTranslator):
                     d_k=model_opt.d_k,
                     d_v=model_opt.d_v,
                     d_model=model_opt.d_model,
-                    d_word_vec=model_opt.d_word_vec,
+                    d_word_vec=model_opt.d_word_vec,  # src word vector dimension
                     d_inner=model_opt.d_inner_hid,
                     n_layers=model_opt.n_layers,
                     n_head=model_opt.n_head,

@@ -8,7 +8,7 @@ import time
 from tqdm import tqdm
 
 import config
-from src.model import Transformer, BiTransformer, Translator
+from src.model import Transformer, BiTransformer, Translator, BertTransformer
 from dataset import TranslationDataset
 # from transformer.Optim import ScheduledOptim
 from transformer import Constants
@@ -342,6 +342,7 @@ def main():
     parser.add_argument('-epoch', type=int, default=200)
     parser.add_argument('-batch_size', type=int, default=128)
     parser.add_argument('-bi', action='store_true')
+    parser.add_argument('-bert', action='store_true')
 
     parser.add_argument('-d_word_vec', type=int, default=300,
                         help="dimension of src text word vectors")
@@ -407,8 +408,23 @@ def main():
             n_layers=opt.n_layers,
             n_head=opt.n_head,
             dropout=opt.dropout,
-            embedding_matrix=data['src_embeddings']).to(device)
+            embedding_matrix=data['src_embeddings'],
+            bert=opt.bert).to(device)
 
+    elif opt.bert:
+        transformer = BertTransformer(
+            opt.src_vocab_size,
+            opt.tgt_vocab_size,
+            opt.max_token_seq_len,
+            tgt_emb_prj_weight_sharing=opt.proj_share_weight,
+            emb_src_tgt_weight_sharing=opt.embs_share_weight,
+            d_k=opt.d_k,
+            d_v=opt.d_v,
+            d_model=opt.d_model,
+            d_inner=opt.d_inner_hid,
+            n_layers=opt.n_layers,
+            n_head=opt.n_head,
+            dropout=opt.dropout).to(device)
     else:
         transformer = Transformer(
             opt.src_vocab_size,
@@ -425,6 +441,7 @@ def main():
             n_head=opt.n_head,
             dropout=opt.dropout,
             embedding_matrix=data['src_embeddings']).to(device)
+
 
     optimizer = Scheduler(
         optim.Adam(

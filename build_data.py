@@ -15,6 +15,8 @@ from src.word2vec import build_vocab, get_glove
 from transformer.Constants import *
 from scripts.preprocess import reformat_equation
 
+from transformers import BertTokenizer
+
 OPS = re.compile(r'([\+\-\*/\^\(\)=<>!;])', re.UNICODE)  # operators
 DIGITS = re.compile(r'\d*\.?\d+')
 SIGNED_DIGITS = re.compile(r'\-?\d*\.?\d+')
@@ -22,7 +24,7 @@ WORDDIGITS = 'zero|one|two|three|four|five|six|seven|eight|nine'
 WORDNUM = 'one|two|three|four|five|six|seven|eight|nine|ten| \
             eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen| \
             eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety'
-COMMON_CONSTANTS = set(['0.1', '0.05', '0.25', '0.5', '1', '2', '12', '24', '10', '100', '1000',
+COMMON_CONSTANTS = set(['0.1', '0.05', '0.25', '0.5', '1', '2', '3', '12', '24', '10', '100', '1000',
                         '60', '180', '360', '3600', '3.14', '3.1416', '1.609', '52', '5280', '1760', '0.453'])
 EXCLUDE_NUM = set([1, 0, -1, 2, -1, 10, 100, 3, -2])
 MATH_TOKENS = ['+', '-', '*', '/', '=', '(', ')', ';', '^', 'sqrt', 'sin', 'cos', 'tan', 'cot', 'exp']
@@ -142,8 +144,8 @@ def equation_tokenize(expr, numbers):
             text_digits.remove((v, k))
             text_digits.append((v, k))
 
-        # search for the combined numbers -- not in use
-        if False and not replaced and v_equ not in EXCLUDE_NUM:
+        # search for the combined numbers
+        if True and not replaced and v_equ not in EXCLUDE_NUM:
             for v_text, key in combined_numbers.items():  # try matching combined numbers
                 # try:
                 #     v_equ = eval(match.group())
@@ -167,7 +169,7 @@ def equation_tokenize(expr, numbers):
 
         # before this, maybe try different operations on the current numbers
         # to see if they match
-        if False and not replaced and v_equ not in EXCLUDE_NUM:
+        if True and not replaced and v_equ not in EXCLUDE_NUM:
             for v_text, key in additional_numbers.items():  # try matching additional numbers
                 # try:
                 #     v_equ = eval(match.group())
@@ -388,7 +390,8 @@ def text_tokenize(question, equations):
     question, equations = process_frac(question, equations)
     question = process_percent(question, equations)
     question = question.replace('/', ' / ')  # break fractions
-    question = add_knowledge(question)
+    #question = add_knowledge(question)
+
 
     words = nltk.word_tokenize(question)
     tokens = []
@@ -444,6 +447,7 @@ def text_tokenize(question, equations):
                 # print('last', prev_end, len(word))
                 tokens += list(word[prev_end:])
         else:
+            word.lower()
             tokens.append(word)
 
     return tokens, numbers, equations
@@ -514,6 +518,14 @@ def get_token_indexes(tokens):
 
     return indexes
 
+def update_tokenizer(tokens, tokenizer, cutoff=3):
+    counter = Counter(tokens)
+    for tok, freq in counter.items():
+        if freq >= cutoff:
+            tokenizer.add_tokens([tok])
+    math_tokens = [str(x) for x in range(10)] + list(COMMON_CONSTANTS) + MATH_TOKENS + UNITS
+    for tok in math_tokens:
+        tokenizer.add_tokens([tok])
 
 def get_vocab(tokens, glove_path, cutoff=3):
     counter = Counter(tokens)
@@ -529,7 +541,7 @@ def get_vocab(tokens, glove_path, cutoff=3):
     return word_vec
 
 
-def load_data(data_files, pretrained=True, max_len=200):
+def load_data(data_files, pretrained=False, bert=True,max_len=200):
     data = []
     for f in data_files:
         data += json.load(open(f))
@@ -580,20 +592,71 @@ def load_data(data_files, pretrained=True, max_len=200):
         index[i] = d['id']
 
     print("src truncated {}, tgt truncated {}".format(src_truncated, tgt_truncated))
-    if pretrained:
-        # src_vocab = build_vocab(itertools.chain(*src), config.WORD_VECTORS, K=50000)
-        src_vocab = get_vocab(itertools.chain(*src), config.WORD_VECTORS, cutoff=0)
-        special_symbols = ['N_' + str(i) for i in range(N_SYMBOLS)] + \
-                          ['M_' + str(i) for i in range(N_SYMBOLS)] + \
-                          ['F_' + str(i) for i in range(N_SYMBOLS)] + \
-                          [PAD_WORD, UNK_WORD, BOS_WORD, EOS_WORD]
-        for symbol in special_symbols:
-            if symbol in src_vocab:
-                del src_vocab[symbol]
-                print("delete token {} before setting word indexes".format(symbol))
-        src_embeddings, src_indexes = get_embedding_matrix(word_vectors=src_vocab)
+
+    data = {}
+    data['dict'] = {}
+
+    special_symbols = ['N_' + str(i) for i in range(N_SYMBOLS)] + \
+                      ['M_' + str(i) for i in range(N_SYMBOLS)] + \
+                      ['F_' + str(i) for i in range(N_SYMBOLS)]
+
+    if bert:
+        tokenizer = BertTokenizer.from_pretrained('bert-base-cased')
+        print(tokenizer.add_tokens(special_symbols))
+        update_tokenizer(itertools.chain(*src), tokenizer, cutoff=2)
+
+        src_idx_repr = []
+        for src_sent in src:
+            tokens = list()
+            tokens += tokenizer.convert_tokens_to_ids(["[CLS]"])
+            for token in src_sent:
+                #if token not in special_symbols:
+                 #   token = token.lower()
+                #if token.isdigit():
+
+                tokens+= tokenizer.convert_tokens_to_ids([token])
+            tokens += tokenizer.convert_tokens_to_ids(["[SEP]"])
+
+            src_idx_repr.append(tokens)
+
+        src_ids_2_tokens = dict(tokenizer.ids_to_tokens)
+        src_ids_2_tokens.update(tokenizer.added_tokens_decoder)
+        src_indexes = {value:key for key, value in src_ids_2_tokens.items()}
+        src_embeddings = None
+
     else:
-        src_indexes = get_token_indexes(itertools.chain(*src))
+        if pretrained:
+            # src_vocab = build_vocab(itertools.chain(*src), config.WORD_VECTORS, K=50000)
+            src_vocab = get_vocab(itertools.chain(*src), config.WORD_VECTORS, cutoff=0)
+
+            for symbol in special_symbols + [PAD_WORD, UNK_WORD, BOS_WORD, EOS_WORD]:
+                if symbol in src_vocab:
+                    del src_vocab[symbol]
+                    print("delete token {} before setting word indexes".format(symbol))
+            src_embeddings, src_indexes = get_embedding_matrix(word_vectors=src_vocab)
+
+        else:
+            # token 2 id
+            src_indexes = get_token_indexes(itertools.chain(*src))
+
+
+        src_idx_repr = []
+        for src_sent in src:
+            idx = [BOS]
+            # idx += [src_indexes[s] if s in src_indexes else src_indexes[UNK_WORD] for s in src_sent]
+            for s in src_sent:
+                if s in src_indexes:
+                    idx.append(src_indexes[s])
+                elif s.lower() in src_indexes:
+                    idx.append(src_indexes[s.lower()])
+                else:
+                    idx.append(src_indexes[UNK_WORD])
+            idx.append(EOS)
+            src_idx_repr.append(idx)
+
+    #token 2 id
+    data['dict']['src'] = src_indexes
+
 
     # tgt_indexes = get_token_indexes(itertools.chain(*tgt))
     tgt_tokens = ['N_' + str(x) for x in range(N_SYMBOLS)] + \
@@ -603,26 +666,12 @@ def load_data(data_files, pretrained=True, max_len=200):
                  + MATH_TOKENS + [chr(x+ord('a')) for x in range(26)]
     tgt_indexes = get_token_indexes(tgt_tokens)
 
-
-    data = {}
-    data['dict'] = {}
-    data['dict']['src'] = src_indexes
+    #token 2 id
     data['dict']['tgt'] = tgt_indexes
+    # yahoo answers
     data['idx2id'] = index
 
-    src_idx_repr = []
-    for src_sent in src:
-        idx = [BOS]
-        # idx += [src_indexes[s] if s in src_indexes else src_indexes[UNK_WORD] for s in src_sent]
-        for s in src_sent:
-            if s in src_indexes:
-                idx.append(src_indexes[s])
-            elif s.lower() in src_indexes:
-                idx.append(src_indexes[s.lower()])
-            else:
-                idx.append(src_indexes[UNK_WORD])
-        idx.append(EOS)
-        src_idx_repr.append(idx)
+    #TODO: use bert tokenizer here
 
     tgt_idx_repr = []
     for tgt_sent in tgt:
@@ -646,7 +695,7 @@ def load_data(data_files, pretrained=True, max_len=200):
     data['src_embeddings'] = src_embeddings
     data['settings'] = {}
     data['settings']['n_instances'] = len(src_idx_repr)
-    data['settings']['src_vocab_size'] = len(src_indexes)
+    data['settings']['src_vocab_size'] = len(src_indexes) #TODO: set to size of tokenier
     data['settings']['tgt_vocab_size'] = len(tgt_indexes)
     data['settings']['max_src_seq'] = max([len(x) for x in src_idx_repr])
     data['settings']['max_tgt_seq'] = max([len(x) for x in tgt_idx_repr])
@@ -688,6 +737,8 @@ if __name__ == '__main__':
                      pretrained=pretrained, max_len=args.max_len)
     # data = load_data(['/data2/ymeng/dolphin18k/eval_dataset/eval_dataset_formatted.json'],
     #                  pretrained=pretrained, max_len=args.max_len)
+    if not os.path.exists(args.dest):
+        os.mkdir(args.dest)
     path = os.path.join(args.dest, 'data.pt')
     torch.save(data, path)
 
