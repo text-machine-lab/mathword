@@ -541,7 +541,7 @@ def get_vocab(tokens, glove_path, cutoff=3):
     return word_vec
 
 
-def load_data(data_files, pretrained=False, bert=True,max_len=200):
+def load_data(data_files, pretrained=False, bert=False,max_len=200):
     data = []
     for f in data_files:
         data += json.load(open(f))
@@ -723,6 +723,7 @@ if __name__ == '__main__':
     parser.add_argument('-max-len', type=int, default=70)
     parser.add_argument('-datafile', default='/data2/ymeng/dolphin18k/eval_dataset/eval_dataset_shuffledv2.json')
     parser.add_argument('-dest', default='models/')
+    parser.add_argument('-bert', action='store_true')
     args = parser.parse_args()
 
     pretrained = not args.no_pretrained
@@ -734,7 +735,7 @@ if __name__ == '__main__':
     #                  pretrained=pretrained, max_len=args.max_len)
 
     data = load_data([args.datafile],
-                     pretrained=pretrained, max_len=args.max_len)
+                     pretrained=pretrained, bert=args.bert, max_len=args.max_len)
     # data = load_data(['/data2/ymeng/dolphin18k/eval_dataset/eval_dataset_formatted.json'],
     #                  pretrained=pretrained, max_len=args.max_len)
     if not os.path.exists(args.dest):
