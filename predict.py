@@ -9,7 +9,6 @@ import json
 import config
 from dataset import TranslationDataset
 from src.model import Translator
-from src.ntm_model import NTMTranslator
 from transformer.Constants import UNK_WORD
 
 def main():

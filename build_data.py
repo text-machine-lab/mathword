@@ -22,7 +22,7 @@ WORDDIGITS = 'zero|one|two|three|four|five|six|seven|eight|nine'
 WORDNUM = 'one|two|three|four|five|six|seven|eight|nine|ten| \
             eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen| \
             eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety'
-COMMON_CONSTANTS = set(['0.1', '0.05', '0.25', '0.5', '1', '2', '12', '24', '10', '100', '1000',
+COMMON_CONSTANTS = set(['0.01', '0.1', '0.05', '0.25', '0.5', '1', '2', '12', '24', '26', '10', '100', '1000',
                         '60', '180', '360', '3600', '3.14', '3.1416', '1.609', '52', '5280', '1760', '0.453'])
 MATH_TOKENS = ['+', '-', '*', '/', '=', '(', ')', ';', '^', 'sqrt', 'sin', 'cos', 'tan', 'cot', 'exp']
 UNITS = ['m', 'cm', 'mm', 'ft', 'inch', 'mph', 'g', 'kg', 'mg', 'lb', 'lbs', 'oz', 'mi', 'rad', '\u00b0']
@@ -387,7 +387,7 @@ def text_tokenize(question, equations):
     question, equations = process_frac(question, equations)
     question = process_percent(question, equations)
     question = question.replace('/', ' / ')  # break fractions
-    question = add_knowledge(question)
+    # question = add_knowledge(question)
 
     words = nltk.word_tokenize(question)
     tokens = []
@@ -672,6 +672,7 @@ if __name__ == '__main__':
     parser.add_argument('-no-pretrained', action='store_true', default=False)
     parser.add_argument('-max-len', type=int, default=70)
     parser.add_argument('-datafile', default='/data2/ymeng/dolphin18k/eval_dataset/eval_dataset_shuffledv2.json')
+    # parser.add_argument('-datafile', default='/data2/ymeng/dolphin18k/eval_dataset/eval_dataset_auto_corrected.json')
     parser.add_argument('-dest', default='models/')
     args = parser.parse_args()
 

@@ -11,6 +11,7 @@ def main():
     parser.add_argument('result_file')
     parser.add_argument('-wrong', default=None, help="output path with wrong anwers")
     parser.add_argument('-right', default=None, help="output path with right anwers")
+    parser.add_argument('-truth', action='store_true', default=False, help="use truth equations for evaluation")
 
     args = parser.parse_args()
 
@@ -25,10 +26,12 @@ def main():
     right_output = []
     for d in tqdm(pred, mininterval=2, leave=False):
         answer = d['ans']
-        # equations = d['equation'].split(';')
-        equations = d['pred'][0].split(';')
-        if 'pred_2' in d and d['pred_2'][1] > d['pred'][1]:
-            equations = d['pred_2'][0].split(';')
+        if args.truth:
+            equations = d['equation'].split(';')
+        else:
+            equations = d['pred'][0].split(';')
+            if 'pred_2' in d and d['pred_2'][1] > d['pred'][1]:
+                equations = d['pred_2'][0].split(';')
 
         try:
             score, solution = check_solution(answer, equations)

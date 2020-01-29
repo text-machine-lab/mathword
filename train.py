@@ -339,8 +339,9 @@ def main():
     parser.add_argument('-split', type=float, default=0.8, help="portion for training")
     parser.add_argument('-offset', type=float, default=0, help="determin starting index of training set, for cross validation")
 
-    parser.add_argument('-epoch', type=int, default=200)
-    parser.add_argument('-batch_size', type=int, default=128)
+    parser.add_argument('-epoch', type=int, default=250)
+    # parser.add_argument('-batch_size', type=int, default=128)
+    parser.add_argument('-batch_size', type=int, default=64)
     parser.add_argument('-bi', action='store_true')
 
     parser.add_argument('-d_word_vec', type=int, default=300,

@@ -16,7 +16,8 @@ import copy
 
 import config
 from dataset import TranslationDataset
-from src.model import Translator, print_grad
+# from src.model import Translator, print_grad
+from src.gcl_model import Translator, print_grad
 from src.check_answers import check_solution
 from src.rougescore import rouge_n
 from src.math_laws import permute_tgt
@@ -219,6 +220,10 @@ def main():
         n_correct = 0
         total_loss = 0
         optimizer_reinforce.n_current_steps += 1
+
+        # for gcl
+        translator.model.encoder.gcl.init_sequence(1)
+
         for batch in tqdm(data_loader, mininterval=2, desc='  - (Train)', leave=True):
             # batch: (*src_insts, *tgt_insts, *tgt_nums_insts)
             # print(batch[0]);sys.exit(1)
@@ -229,6 +234,12 @@ def main():
             batch_loss, batch_n_correct = train_batch(all_hyp_list, all_score_list, translator, data_loader,
                                                     preprocess_data, formatted_map, instance_idx, opt)
             optimizer_reinforce.zero_grad()
+
+            # for gcl
+            memory = translator.model.encoder.gcl.memory
+            translator.model.encoder.gcl.init_sequence(1)
+            translator.model.encoder.gcl.memory = memory
+
             batch_loss.backward()
             optimizer_reinforce.step_and_update_lr()
 
@@ -237,10 +248,10 @@ def main():
             instance_idx += opt.batch_size
             instance_idx = instance_idx % N
 
-            # if batch_n_correct / opt.batch_size < 0.4:
-            #     # teacher forceing training
-            #     teacher_train_batch(translator.model, batch, optimizer_teacher, translator.device,
-            #                         bidirectional=translator.opt.bi)
+            if batch_n_correct / opt.batch_size < 0.3:
+                # teacher forceing training
+                teacher_train_batch(translator.model, batch, optimizer_teacher, translator.device,
+                                    bidirectional=translator.opt.bi)
 
         # end of epoch
         train_acc = n_correct / train_len
