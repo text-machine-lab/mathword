@@ -17,7 +17,8 @@ import copy
 import config
 from dataset import TranslationDataset
 # from src.model import Translator, print_grad
-from src.gcl_model import Translator, print_grad
+# from src.gcl_model import Translator, print_grad
+from src.gcl_model2 import Translator, print_grad
 from src.check_answers import check_solution
 from src.rougescore import rouge_n
 from src.math_laws import permute_tgt
@@ -86,7 +87,8 @@ def sample_instances(scores, eps=0.01):
     score_values = np.array([x.item() for x in scores.data])
     probs = np.exp(score_values) / (sum(np.exp(score_values)) + eps)
     cum_probs = probs.cumsum()
-    u = np.random.rand(len(cum_probs), 1)
+    # u = np.random.rand(len(cum_probs), 1)
+    u = np.random.rand(8, 1)
     choices = (u < cum_probs).argmax(axis=1)
 
     return choices
@@ -138,11 +140,11 @@ def main():
     parser.add_argument('-offset', type=float, default=0,
                         help="determin starting index of training set, for cross validation")
     parser.add_argument('-save_model', default=None, help="model destination path")
-    parser.add_argument('-beam_size', type=int, default=6,
+    parser.add_argument('-beam_size', type=int, default=8,
                         help='Beam size')
     parser.add_argument('-batch_size', type=int, default=8,
                         help='Batch size')
-    parser.add_argument('-n_best', type=int, default=6,
+    parser.add_argument('-n_best', type=int, default=8,
                         help="If verbose is set, will output the n_best decoded sentences")
     parser.add_argument('-no_cuda', action='store_true')
     parser.add_argument('-epochs', type=int, default=100)
@@ -222,7 +224,7 @@ def main():
         optimizer_reinforce.n_current_steps += 1
 
         # for gcl
-        translator.model.encoder.gcl.init_sequence(1)
+        # translator.model.encoder.gcl.init_sequence(1)
 
         for batch in tqdm(data_loader, mininterval=2, desc='  - (Train)', leave=True):
             # batch: (*src_insts, *tgt_insts, *tgt_nums_insts)
@@ -235,10 +237,10 @@ def main():
                                                     preprocess_data, formatted_map, instance_idx, opt)
             optimizer_reinforce.zero_grad()
 
-            # for gcl
-            memory = translator.model.encoder.gcl.memory
-            translator.model.encoder.gcl.init_sequence(1)
-            translator.model.encoder.gcl.memory = memory
+            # # for gcl
+            # memory = translator.model.encoder.gcl.memory
+            # translator.model.encoder.gcl.init_sequence(1)
+            # translator.model.encoder.gcl.memory = memory
 
             batch_loss.backward()
             optimizer_reinforce.step_and_update_lr()
@@ -248,10 +250,10 @@ def main():
             instance_idx += opt.batch_size
             instance_idx = instance_idx % N
 
-            if batch_n_correct / opt.batch_size < 0.3:
-                # teacher forceing training
-                teacher_train_batch(translator.model, batch, optimizer_teacher, translator.device,
-                                    bidirectional=translator.opt.bi)
+            # if batch_n_correct / opt.batch_size < 0.3:
+            #     # teacher forceing training
+            #     teacher_train_batch(translator.model, batch, optimizer_teacher, translator.device,
+            #                         bidirectional=translator.opt.bi)
 
         # end of epoch
         train_acc = n_correct / train_len
@@ -265,6 +267,7 @@ def main():
         translator.model_opt.max_token_seq_len = original_max_token_seq_len
         checkpoint = {
             'model': model_state_dict,
+            'memory': translator.model.encoder.gcl.memory,
             'settings': translator.model_opt,
             'epoch': epoch}
         model_name = opt.save_model + '.chkpt'
@@ -373,7 +376,6 @@ def train_batch(all_hyp_list, all_score_list, translator, data_loader, preproces
             for log_prob, reward in zip(sampled_logprobs, sampled_rewards):
                 sampled_loss.append(-log_prob[0] * (reward[0] - baseline_reward0))  # loss can be negative now
                 sampled_loss.append(-log_prob[1] * (reward[1] - baseline_reward1))
-                # sampled_loss.append(-log_prob * reward)
         else:
             baseline_reward = sum([x for x in sampled_rewards]) / len(sampled_rewards)
             sampled_loss = []
