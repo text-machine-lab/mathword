@@ -461,7 +461,7 @@ class GCL(NTM):
             if head.is_read_head():
                 r, head_state = head(k, controller_outp, save_attn=save_attn)
                 reads += [r]
-            elif self.training: # do not rewrite memory during eval
+            else: #elif self.training: # do not rewrite memory during eval
                 head_state = head(k, controller_outp, t, save_attn=save_attn)
             heads_states += [head_state]
 
@@ -513,7 +513,7 @@ class EncapsulatedGCL(nn.Module):
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
         # Create the NTM components
-        memory = GCLMemory(N, M, K)
+        self.memory = GCLMemory(N, M, K).to(self.device)
         if controller_type == 'LSTM':
             # controller = LSTMController(num_inputs + M*num_heads, controller_size, controller_layers)
             controller = LSTMController(num_inputs, controller_size, controller_layers)
@@ -526,12 +526,12 @@ class EncapsulatedGCL(nn.Module):
         heads = nn.ModuleList([])
         for i in range(num_heads):
             heads += [
-                GCLReadHead(memory, controller_size),
-                GCLWriteHead(memory, controller_size)
+                GCLReadHead(self.memory, controller_size),
+                GCLWriteHead(self.memory, controller_size)
             ]
 
-        self.gcl = GCL(num_inputs, num_outputs, controller, memory, heads).to(self.device)
-        self.memory = memory.to(self.device)
+        self.gcl = GCL(num_inputs, num_outputs, controller, self.memory, heads).to(self.device)
+        # self.memory = memory.to(self.device)
 
     def init_sequence(self, batch_size):
         """Initializing the state."""

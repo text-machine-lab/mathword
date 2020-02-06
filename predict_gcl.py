@@ -8,7 +8,8 @@ import json
 
 import config
 from dataset import TranslationDataset
-from src.gcl_model import Translator
+#from src.gcl_model import Translator
+from src.gcl_model2 import Translator
 from transformer.Constants import UNK_WORD
 
 def main():
@@ -87,6 +88,7 @@ def main():
     translator = Translator(opt)
     # translator = NTMTranslator(opt)
     translator.model.eval()
+    print(translator.model.encoder.gcl.gcl.memory.content[0])
 
     output = []
     n = 0

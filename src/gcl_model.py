@@ -50,95 +50,60 @@ class Encoder(OriginalEncoder):
             EncoderLayer(d_model, d_inner, n_head, d_k, d_v, dropout=dropout)
             for _ in range(n_layers)])
 
-        # # num_inputs, num_outputs, controller_size, controller_layers, num_heads, N, M, K, controller_type = 'MLP')
+        # num_inputs, num_outputs, controller_size, controller_layers, num_heads, N, M, K, controller_type = 'MLP')
         # num_outputs = self.tgt_word_prj.weight.shape[-1]
-        self.gcl = EncapsulatedGCL(2*72, 2*72, 2*72, 0, 1, N=64, M=2*72, K=d_model,
-                                   controller_type='simple')
+
+        # self.gcl = EncapsulatedGCL(d_model, len_max_seq*d_model, 128, 2, 1, N=64, M=128, K=d_model, controller_type='MLP')
+        self.gcl = EncapsulatedGCL(d_model, d_model, 128, 2, 1, N=96, M=128, K=d_model,
+                                   controller_type='MLP')
         self.gcl.init_sequence(1)
-        self.memory_ready = False
 
-        self.tuner = nn.Bilinear(d_model, d_model, 1)
-
+        self.adapter = nn.Linear(d_model * 2, d_model)  # process enc_output and gcl_output
 
     def forward(self, src_seq, src_pos, return_attns=False):
 
-        def forward_seq(src_seq, src_pos, return_attns=return_attns):
-            enc_slf_attn_list = []
+        enc_slf_attn_list = []
 
-            # -- Prepare masks
-            slf_attn_mask = get_attn_key_pad_mask(seq_k=src_seq, seq_q=src_seq)
-            non_pad_mask = get_non_pad_mask(src_seq)
+        # -- Prepare masks
+        slf_attn_mask = get_attn_key_pad_mask(seq_k=src_seq, seq_q=src_seq)
+        non_pad_mask = get_non_pad_mask(src_seq)
 
-            # -- Forward
-            src_word_emb = self.src_enc_dropout(self.src_word_emb(src_seq))
-            enc_output = F.tanh(self.src_word_enc(src_word_emb)) + self.position_enc(src_pos)
-            enc_input = enc_output.clone()
+        # -- Forward
+        src_word_emb = self.src_enc_dropout(self.src_word_emb(src_seq))
+        enc_output = F.tanh(self.src_word_enc(src_word_emb)) + self.position_enc(src_pos)
 
-            for enc_layer in self.layer_stack:
-                enc_output, enc_slf_attn = enc_layer(
-                    enc_output,
-                    non_pad_mask=non_pad_mask,
-                    slf_attn_mask=slf_attn_mask)
-                if return_attns:
-                    enc_slf_attn_list += [enc_slf_attn]
+        k = enc_output#.clone()
 
+        for enc_layer in self.layer_stack:
+            enc_output, enc_slf_attn = enc_layer(
+                enc_output,
+                non_pad_mask=non_pad_mask,
+                slf_attn_mask=slf_attn_mask)
             if return_attns:
-                return enc_output, enc_slf_attn_list, enc_input
-            return enc_output, enc_input
+                enc_slf_attn_list += [enc_slf_attn]
 
-        enc_output, enc_input = forward_seq(src_seq, src_pos, return_attns=False)
+        x = enc_output#.clone()
 
-        k = F.max_pool1d(enc_input.permute(0, 2, 1), enc_input.shape[-2]).squeeze(-1)
-        batch_size = k.shape[0]
-        d_model = k.shape[-1]
-
-        x0 = src_seq.type(torch.cuda.FloatTensor)
-        x1 = src_pos.type(torch.cuda.FloatTensor)
-        n_positions = x1.shape[1]
-        n_paddings = 72 - n_positions
-        if n_paddings > 0:
-            x0 = torch.cat([x0, torch.zeros(x0.shape[0], n_paddings).type(torch.cuda.FloatTensor)], -1)
-            x1 = torch.cat([x1, torch.zeros(x1.shape[0], n_paddings).type(torch.cuda.FloatTensor)], -1)
-        x = torch.cat([x0, x1], -1)
+        # k shape torch.Size([64, 72, 512])
+        # x shape torch.Size([64, 72, 512])
+        # gcl forward(self, k=None, x=None, bidirectional=False, save_attn=False)
+        k = F.max_pool1d(k.permute(0, 2, 1), k.shape[-2]).squeeze(-1)
+        x = F.max_pool1d(x.permute(0, 2, 1), x.shape[-2]).squeeze(-1)
 
         gcl_output = self.gcl(k.unsqueeze(0).detach(), x.unsqueeze(0), bidirectional=False, save_attn=False)
-        retrieval = gcl_output.type(torch.cuda.LongTensor).view(batch_size, -1)
+        batch_size = x.shape[0]
+        # gcl_output = self.gcl(k.unsqueeze(0).detach(), x.view(batch_size, -1).unsqueeze(0), bidirectional=False, save_attn=False)
+        gcl_output = gcl_output.view(batch_size, 1, -1)
+        # print(enc_output.shape, gcl_output.shape)
 
-        if not self.memory_ready:
-            if torch.max(self.gcl.memory.content[0, -1, :]) > 0:  # last slot
-                self.memory_ready = True
-        # print(self.memory_ready)
-        if not self.memory_ready:
-            return enc_output, src_seq
+        # enc_output = enc_output + gcl_output
+        n_positions = enc_output.shape[1]
+        gcl_output = torch.cat(n_positions*[gcl_output], 1)
+        enc_output = self.adapter(torch.cat([enc_output, gcl_output], -1))
 
-        pos_part = retrieval[:, -72:]
-        max_len = torch.max(pos_part)
-        # print(max_len);sys.exit(1)
-        retrieval_seq = retrieval[:, :max_len]
-        retrieval_pos = retrieval[:, 72:72+max_len]
-        if torch.max(retrieval_pos[0]) == 0 and batch_size > 1: # empty memory
-            retrieval_seq[0] = retrieval_seq[1]
-            retrieval_pos[0] = retrieval_pos[1]
-        retrieval_enc_output, _ = forward_seq(retrieval_seq, retrieval_pos, return_attns=False)
-
-        enc_output_maxpool = F.max_pool1d(enc_output.permute(0, 2, 1), enc_output.shape[-2]).squeeze(-1)
-        retrieval_output_maxpool = F.max_pool1d(retrieval_enc_output.permute(0, 2, 1), retrieval_enc_output.shape[-2]).squeeze(-1)
-
-        # gates = F.sigmoid(self.tuner(enc_output_maxpool, retrieval_output_maxpool)).unsqueeze(-1)
-        n, m = enc_output.shape[1], retrieval_enc_output.shape[1]
-        if n > m:
-            retrieval_enc_output = torch.cat([retrieval_enc_output, torch.zeros(batch_size, n-m, d_model).type(torch.cuda.FloatTensor)], 1)
-        elif n < m:
-            enc_output = torch.cat([enc_output, torch.zeros(batch_size, m-n, d_model).type(torch.cuda.FloatTensor)], 1)
-            src_seq = torch.cat([src_seq, torch.zeros(batch_size, m - n).type(torch.cuda.LongTensor)], 1)
-            # src_pos = torch.cat([src_pos, torch.zeros(batch_size, m - n).type(torch.cuda.FloatTensor)], 1)
-
-        #combined_enc_output = enc_output * gates + retrieval_enc_output * (1-gates)
-        combined_enc_output = enc_output + retrieval_enc_output
-        # print(gates)
-        # if return_attns:
-        #     return enc_output, enc_slf_attn_list
-        return combined_enc_output, src_seq
+        if return_attns:
+            return enc_output, enc_slf_attn_list
+        return enc_output,
 
 
 class Decoder(OriginalDecoder):
@@ -226,19 +191,13 @@ class Transformer(nn.Module):
             self.encoder.src_word_emb.weight = self.decoder.tgt_word_emb.weight
 
         # num_inputs, num_outputs, controller_size, controller_layers, num_heads, N, M, K, controller_type = 'MLP')
-        self.gcl = EncapsulatedGCL(d_model, d_model, 128, 2, 1, N=64, M=128, K=d_model, controller_type='MLP')
-        self.gcl.init_sequence(1)
-
-    def find_match(self, k):
-        _, loc = self.gcl.memory.address(k, 1, None, None, 1, flip_keys=False)
-        match_k = self.gcl.memory.keys[loc]
-
-        return match_k
+        # self.gcl = EncapsulatedGCL(d_model, d_model, d_model, 2, 3, N=128, M=d_model, K=d_model, controller_type='MLP')
+        # self.gcl.init_sequence(1)
 
     def forward(self, src_seq, src_pos, tgt_seq, tgt_pos):
         tgt_seq, tgt_pos = tgt_seq[:, :-1], tgt_pos[:, :-1]
 
-        enc_output, src_seq, *_ = self.encoder(src_seq, src_pos)
+        enc_output, *_ = self.encoder(src_seq, src_pos)
         dec_output, *_ = self.decoder(tgt_seq, tgt_pos, src_seq, enc_output)
 
         # k = enc_output.clone()
@@ -255,7 +214,6 @@ class Transformer(nn.Module):
         # dec_output = torch.cat([dec_output, gcl_output.squeeze()], -1)
 
         seq_logit = self.tgt_word_prj(dec_output) * self.x_logit_scale
-
         return seq_logit.view(-1, seq_logit.size(2))
 
 
@@ -307,7 +265,7 @@ class BiTransformer(nn.Module):
         tgt_seq, tgt_seq_reversed, tgt_pos = tgt_seq[:, :-1], tgt_seq_reversed[:, :-1], tgt_pos[:, :-1]
         # print(tgt_seq_reversed)
 
-        enc_output, src_seq, *_ = self.encoder(src_seq, src_pos)
+        enc_output, *_ = self.encoder(src_seq, src_pos)
 
         dec_output_lr, *_ = self.decoder_lr(tgt_seq, tgt_pos, src_seq, enc_output)
         dec_output_rl, *_ = self.decoder_rl(tgt_seq_reversed, tgt_pos, src_seq, enc_output)
@@ -366,14 +324,16 @@ class Translator(OriginalTranslator):
                     n_head=model_opt.n_head,
                     dropout=model_opt.dropout)
 
-            model.load_state_dict(checkpoint['model'])
-            # model = checkpoint['model']
+            try:
+                model.load_state_dict(checkpoint['model'])
+            except AttributeError:
+                model = checkpoint['model']
             if 'memory' in checkpoint:
                 model.encoder.gcl.memory = checkpoint['memory']
                 model.encoder.gcl.gcl.memory = model.encoder.gcl.memory
                 for head in model.encoder.gcl.gcl.heads:
                     head.memory = model.encoder.gcl.memory
-                #print('memory loaded!', model.encoder.gcl.memory.content[0], model.encoder.gcl.gcl.heads[0].memory.content[0])
+                print('memory loaded!')
             else:
                 print('no memory found. ckpt keys:', checkpoint.keys())
             print('[Info] Trained model state loaded.')
@@ -549,7 +509,7 @@ class Translator(OriginalTranslator):
             if hasattr(self.model.encoder, 'ntm'):
                 n_inst, len_s = src_seq.size()
                 src_seq = src_seq.repeat(1, n_bm).view(n_inst * n_bm, len_s)
-            src_enc, src_seq, *_ = self.model.encoder(src_seq, src_pos)
+            src_enc, *_ = self.model.encoder(src_seq, src_pos)
             # print(self.model.encoder.ntm.memory.N, self.model.encoder.ntm.memory.memory.shape)
             # print(type(self.model.encoder.ntm.previous_state[0]))
             # print(type(self.model.encoder.ntm.previous_state[1]))

@@ -142,7 +142,7 @@ def main():
     parser.add_argument('-save_model', default=None, help="model destination path")
     parser.add_argument('-beam_size', type=int, default=8,
                         help='Beam size')
-    parser.add_argument('-batch_size', type=int, default=8,
+    parser.add_argument('-batch_size', type=int, default=4,
                         help='Batch size')
     parser.add_argument('-n_best', type=int, default=8,
                         help="If verbose is set, will output the n_best decoded sentences")
@@ -224,7 +224,8 @@ def main():
         optimizer_reinforce.n_current_steps += 1
 
         # for gcl
-        # translator.model.encoder.gcl.init_sequence(1)
+        translator.model.encoder.gcl.init_sequence(1)
+        translator.model.encoder.memory_ready = False
 
         for batch in tqdm(data_loader, mininterval=2, desc='  - (Train)', leave=True):
             # batch: (*src_insts, *tgt_insts, *tgt_nums_insts)
@@ -239,8 +240,12 @@ def main():
 
             # # for gcl
             # memory = translator.model.encoder.gcl.memory
+            # print(memory[-1])
             # translator.model.encoder.gcl.init_sequence(1)
             # translator.model.encoder.gcl.memory = memory
+            # translator.model.encoder.gcl.gcl.meory = memory
+            #for head in translator.model.encoder.gcl.gcl.heads:
+            #    head.memory = memory
 
             batch_loss.backward()
             optimizer_reinforce.step_and_update_lr()
