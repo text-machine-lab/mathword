@@ -461,7 +461,7 @@ class GCL(NTM):
             if head.is_read_head():
                 r, head_state = head(k, controller_outp, save_attn=save_attn)
                 reads += [r]
-            else: #elif self.training: # do not rewrite memory during eval
+            elif self.training: # do not rewrite memory during eval
                 head_state = head(k, controller_outp, t, save_attn=save_attn)
             heads_states += [head_state]
 

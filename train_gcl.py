@@ -114,6 +114,14 @@ class Scheduler():
 def cal_performance(pred, gold, smoothing=False, weight=None):
     ''' Apply label smoothing if needed '''
 
+    # pred (batch*steps, vocab_size), gold(batch, steps)
+    batch_size = gold.shape[0]
+    n, m = pred.shape[0] // batch_size, gold.shape[1]
+    if n > m:
+        gold = torch.cat([gold, torch.zeros(batch_size, n - m).type(torch.cuda.LongTensor)], 1)
+    elif n < m:
+        pred = torch.cat([pred, torch.zeros(batch_size * (m - n), pred.shap[1]).type(torch.cuda.FloatTensor)], 0)
+
     loss = cal_loss(pred, gold, smoothing, weight)
 
     pred = pred.max(1)[1]
@@ -154,8 +162,10 @@ def train_epoch(model, training_data, optimizer, device, smoothing, **kwargs):
     model.train()
     optimizer.n_current_steps += 1
 
-    model.encoder.gcl.init_sequence(1)
-    model.encoder.memory_ready = False
+    model.decoder_lr.gcl.init_sequence(1)
+    model.decoder_rl.gcl.init_sequence(1)
+    model.decoder_lr.memory_ready = False
+    model.decoder_rl.memory_ready = False
 
     total_loss = 0
     n_word_total = 0
@@ -183,6 +193,7 @@ def train_epoch(model, training_data, optimizer, device, smoothing, **kwargs):
             gold = gold_lr  # another name, for convenience
             gold_rl = tgt_seq_reversed[:, 1:]
             pred_lr, pred_rl = model(src_seq, src_pos, tgt_seq, tgt_seq_reversed, tgt_pos)
+            # print(pred_lr.shape, pred_rl.shape, gold_lr.shape, gold_rl.shape)
             loss_lr, n_correct_lr = cal_performance(pred_lr, gold_lr, smoothing=smoothing, weight=weight)
             loss_rl, n_correct_rl = cal_performance(pred_rl, gold_rl, smoothing=smoothing, weight=weight)
 
@@ -292,6 +303,10 @@ def train_transformer(model, training_data, validation_data, optimizer, device, 
 
     valid_accus = []
     for epoch_i in range(opt.epoch):
+        if epoch_i > 50 and not model.decoder_lr.use_memory:
+            model.decoder_lr.use_memory = True
+            model.decoder_rl.use_memory = True
+            print("use_memory set to True")
         print('[ Epoch', epoch_i, ']')
 
         start = time.time()
@@ -314,7 +329,8 @@ def train_transformer(model, training_data, validation_data, optimizer, device, 
         model_state_dict = model.state_dict()
         checkpoint = {
             'model': model_state_dict,
-            'memory': model.encoder.gcl.memory,
+            'memory_lr': model.decoder_lr.gcl.memory,
+            'memory_rl': model.decoder_rl.gcl.memory,
             'settings': opt,
             'epoch': epoch_i}
 

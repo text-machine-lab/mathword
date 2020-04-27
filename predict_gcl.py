@@ -86,10 +86,16 @@ def main():
     block_list = [preprocess_data['dict']['tgt'][UNK_WORD]]
 
     translator = Translator(opt)
+    translator.retrieve_only = True
+
     # translator = NTMTranslator(opt)
     translator.model.eval()
-    print(translator.model.encoder.gcl.gcl.memory.content[0])
-
+    translator.model.decoder_lr.use_memory = True
+    translator.model.decoder_rl.use_memory = True
+    translator.model.decoder_lr.memory_ready = True
+    translator.model.decoder_rl.memory_ready = True
+    print(translator.model.decoder_lr.gcl.gcl.heads[0].memory.content[0])
+    print("use_memory", translator.model.decoder_lr.use_memory)
     output = []
     n = 0
     for batch in tqdm(test_loader, mininterval=2, desc='  - (Test)', leave=False):
